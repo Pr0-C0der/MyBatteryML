@@ -7,6 +7,7 @@ import numpy as np
 from pathlib import Path
 from typing import List, Dict, Any, Optional, Tuple
 import warnings
+from tqdm import tqdm
 
 from .utils import load_battery_data, get_dataset_stats, safe_statistics
 from batteryml.data.battery_data import BatteryData
@@ -112,7 +113,7 @@ class BatteryDataAnalyzer:
         
         # Nominal capacity
         capacities = []
-        for battery in self.batteries:
+        for battery in tqdm(self.batteries, desc="Analyzing basic properties", leave=False):
             if hasattr(battery, 'nominal_capacity_in_Ah') and battery.nominal_capacity_in_Ah:
                 capacities.append(battery.nominal_capacity_in_Ah)
         
@@ -158,7 +159,7 @@ class BatteryDataAnalyzer:
         discharge_capacities = []
         max_discharge_capacities = []
         
-        for battery in self.batteries:
+        for battery in tqdm(self.batteries, desc="Analyzing capacity features", leave=False):
             for cycle in battery.cycle_data:
                 if cycle.charge_capacity_in_Ah:
                     charge_capacities.extend(cycle.charge_capacity_in_Ah)
@@ -193,7 +194,7 @@ class BatteryDataAnalyzer:
         min_voltages = []
         max_voltages = []
         
-        for battery in self.batteries:
+        for battery in tqdm(self.batteries, desc="Analyzing voltage features", leave=False):
             for cycle in battery.cycle_data:
                 if cycle.voltage_in_V:
                     voltages = np.array(cycle.voltage_in_V)
@@ -228,7 +229,7 @@ class BatteryDataAnalyzer:
         min_currents = []
         max_currents = []
         
-        for battery in self.batteries:
+        for battery in tqdm(self.batteries, desc="Analyzing current features", leave=False):
             for cycle in battery.cycle_data:
                 if cycle.current_in_A:
                     currents = np.array(cycle.current_in_A)
@@ -263,7 +264,7 @@ class BatteryDataAnalyzer:
         min_temperatures = []
         max_temperatures = []
         
-        for battery in self.batteries:
+        for battery in tqdm(self.batteries, desc="Analyzing temperature features", leave=False):
             for cycle in battery.cycle_data:
                 if cycle.temperature_in_C:
                     temps = np.array(cycle.temperature_in_C)
@@ -297,7 +298,7 @@ class BatteryDataAnalyzer:
         all_times = []
         cycle_durations = []
         
-        for battery in self.batteries:
+        for battery in tqdm(self.batteries, desc="Analyzing time features", leave=False):
             for cycle in battery.cycle_data:
                 if cycle.time_in_s:
                     times = np.array(cycle.time_in_s)

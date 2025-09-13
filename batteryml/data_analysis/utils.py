@@ -8,6 +8,7 @@ import numpy as np
 from pathlib import Path
 from typing import List, Dict, Any, Optional
 import warnings
+from tqdm import tqdm
 
 from batteryml.data.battery_data import BatteryData
 
@@ -33,7 +34,8 @@ def load_battery_data(data_path: str) -> List[BatteryData]:
     batteries = []
     failed_files = []
     
-    for file_path in battery_files:
+    print(f"Loading {len(battery_files)} battery data files...")
+    for file_path in tqdm(battery_files, desc="Loading battery data", unit="files"):
         try:
             with open(file_path, 'rb') as f:
                 battery = BatteryData.load(file_path)

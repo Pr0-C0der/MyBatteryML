@@ -8,6 +8,7 @@ import numpy as np
 from pathlib import Path
 from typing import Dict, Any, List, Optional
 import warnings
+from tqdm import tqdm
 
 # Set style for better plots
 plt.style.use('default')
@@ -319,9 +320,19 @@ class BatteryDataVisualizer:
         """
         print("Generating all visualization plots...")
         
-        self.plot_dataset_overview(dataset_stats, save=True)
-        self.plot_feature_statistics(feature_stats, save=True)
-        self.plot_correlation_heatmap(feature_stats, save=True)
-        self.create_summary_dashboard(dataset_stats, feature_stats, save=True)
+        # Create list of plot functions to execute
+        plot_functions = [
+            ("Dataset Overview", lambda: self.plot_dataset_overview(dataset_stats, save=True)),
+            ("Feature Statistics", lambda: self.plot_feature_statistics(feature_stats, save=True)),
+            ("Feature Correlation", lambda: self.plot_correlation_heatmap(feature_stats, save=True)),
+            ("Analysis Dashboard", lambda: self.create_summary_dashboard(dataset_stats, feature_stats, save=True))
+        ]
+        
+        # Execute plot functions with progress bar
+        for plot_name, plot_func in tqdm(plot_functions, desc="Generating plots", unit="plot"):
+            try:
+                plot_func()
+            except Exception as e:
+                print(f"Warning: Failed to generate {plot_name}: {e}")
         
         print(f"All plots saved to: {self.output_dir}")
