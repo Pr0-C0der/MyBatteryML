@@ -36,3 +36,6 @@ MANIFEST
 # Hypothesis and Venv
 .hypothesis/
 .venv/
+
+#data
+data/
