@@ -31,3 +31,8 @@ share/python-wheels/
 .installed.cfg
 *.egg
 MANIFEST
+
+
+# Hypothesis and Venv
+.hypothesis/
+.venv/

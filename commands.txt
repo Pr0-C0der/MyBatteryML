@@ -1,0 +1,7 @@
+batteryml download MATR data/raw/MATR
+batteryml preprocess MATR data/raw/MATR data/processed/MATR
+
+
+
+python batteryml.py download MATR data/raw/MATR
+python batteryml.py preprocess MATR data/raw/MATR data/processed/MATR
