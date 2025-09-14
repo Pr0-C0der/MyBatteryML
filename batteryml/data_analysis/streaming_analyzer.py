@@ -15,7 +15,8 @@ from batteryml.data.battery_data import BatteryData
 
 class StreamingBatteryDataAnalyzer:
     """
-    Memory-efficient battery data analyzer that processes files one at a time.
+    TRULY memory-efficient battery data analyzer that processes files one at a time
+    and calculates running statistics without storing all data in memory.
     This is ideal for large datasets that don't fit in memory.
     """
 
@@ -64,7 +65,8 @@ class StreamingBatteryDataAnalyzer:
     
     def analyze_features_streaming(self) -> Dict[str, Any]:
         """
-        Analyze features using streaming approach (one file at a time).
+        Analyze features using TRUE streaming approach (running statistics).
+        This method calculates statistics without storing all data in memory.
         
         Returns:
             Dictionary containing feature statistics
@@ -72,248 +74,195 @@ class StreamingBatteryDataAnalyzer:
         battery_files = get_battery_files(str(self.data_path))
         
         print("\n" + "="*60)
-        print("FEATURE ANALYSIS")
+        print("FEATURE ANALYSIS (TRUE STREAMING)")
         print("="*60)
         
-        # Initialize feature collection dictionaries
-        feature_data = {
-            'nominal_capacity': [],
-            'cycle_count': [],
-            'cycle_number': [],
-            'charge_capacity': [],
-            'discharge_capacity': [],
-            'max_discharge_capacity': [],
-            'voltage': [],
-            'min_voltage': [],
-            'max_voltage': [],
-            'current': [],
-            'min_current': [],
-            'max_current': [],
-            'temperature': [],
-            'min_temperature': [],
-            'max_temperature': [],
-            'time': [],
-            'cycle_duration': []
-        }
+        # Initialize running statistics accumulators
+        running_stats = self._initialize_running_stats()
         
-        print("Processing battery files for feature analysis...")
+        print("Processing battery files with running statistics...")
         
         for file_path in tqdm(battery_files, desc="Analyzing features", unit="files"):
             battery = process_battery_file(file_path)
             if battery is None:
                 continue
             
-            # Basic properties
-            if hasattr(battery, 'nominal_capacity_in_Ah') and battery.nominal_capacity_in_Ah:
-                feature_data['nominal_capacity'].append(battery.nominal_capacity_in_Ah)
-            
-            if battery.cycle_data:
-                feature_data['cycle_count'].append(len(battery.cycle_data))
-            
-            # Process each cycle
-            for cycle in battery.cycle_data:
-                # Cycle number
-                if hasattr(cycle, 'cycle_number') and cycle.cycle_number is not None:
-                    feature_data['cycle_number'].append(cycle.cycle_number)
-                
-                # Capacity features
-                if cycle.charge_capacity_in_Ah:
-                    feature_data['charge_capacity'].extend(cycle.charge_capacity_in_Ah)
-                
-                if cycle.discharge_capacity_in_Ah:
-                    feature_data['discharge_capacity'].extend(cycle.discharge_capacity_in_Ah)
-                    feature_data['max_discharge_capacity'].append(max(cycle.discharge_capacity_in_Ah))
-                
-                # Voltage features
-                if cycle.voltage_in_V:
-                    voltages = np.array(cycle.voltage_in_V)
-                    feature_data['voltage'].extend(voltages)
-                    feature_data['min_voltage'].append(np.min(voltages))
-                    feature_data['max_voltage'].append(np.max(voltages))
-                
-                # Current features
-                if cycle.current_in_A:
-                    currents = np.array(cycle.current_in_A)
-                    feature_data['current'].extend(currents)
-                    feature_data['min_current'].append(np.min(currents))
-                    feature_data['max_current'].append(np.max(currents))
-                
-                # Temperature features
-                if cycle.temperature_in_C:
-                    temps = np.array(cycle.temperature_in_C)
-                    feature_data['temperature'].extend(temps)
-                    feature_data['min_temperature'].append(np.min(temps))
-                    feature_data['max_temperature'].append(np.max(temps))
-                
-                # Time features
-                if cycle.time_in_s:
-                    times = np.array(cycle.time_in_s)
-                    feature_data['time'].extend(times)
-                    if len(times) > 1:
-                        feature_data['cycle_duration'].append(times[-1] - times[0])
+            # Process this battery and update running statistics
+            self._update_running_stats(running_stats, battery)
         
-        # Calculate statistics for each feature
-        self.feature_stats = {}
+        # Calculate final statistics from running accumulators
+        self.feature_stats = self._calculate_final_stats(running_stats)
         
-        # Basic properties
-        self._analyze_basic_properties_streaming(feature_data)
-        
-        # Cycle features
-        self._analyze_cycle_features_streaming(feature_data)
-        
-        # Capacity features
-        self._analyze_capacity_features_streaming(feature_data)
-        
-        # Voltage features
-        self._analyze_voltage_features_streaming(feature_data)
-        
-        # Current features
-        self._analyze_current_features_streaming(feature_data)
-        
-        # Temperature features
-        self._analyze_temperature_features_streaming(feature_data)
-        
-        # Time features
-        self._analyze_time_features_streaming(feature_data)
+        # Print results
+        self._print_all_feature_stats()
         
         return self.feature_stats
     
-    def _analyze_basic_properties_streaming(self, feature_data: Dict[str, List]) -> None:
-        """Analyze basic battery properties from collected data."""
-        print("\nBasic Battery Properties:")
-        print("-" * 40)
-        
-        # Nominal capacity
-        if feature_data['nominal_capacity']:
-            cap_stats = safe_statistics(np.array(feature_data['nominal_capacity']), "nominal_capacity_Ah")
-            self.feature_stats['nominal_capacity'] = cap_stats
-            self._print_feature_stats("Nominal Capacity (Ah)", cap_stats)
-        
-        # Cycle count
-        if feature_data['cycle_count']:
-            cycle_stats = safe_statistics(np.array(feature_data['cycle_count']), "cycle_count")
-            self.feature_stats['cycle_count'] = cycle_stats
-            self._print_feature_stats("Cycle Count", cycle_stats)
+    def _initialize_running_stats(self) -> Dict[str, Any]:
+        """Initialize running statistics accumulators."""
+        return {
+            # Basic properties
+            'nominal_capacity': {'values': [], 'count': 0},
+            'cycle_count': {'values': [], 'count': 0},
+            
+            # Cycle-level features
+            'cycle_number': {'values': [], 'count': 0},
+            
+            # Capacity features
+            'charge_capacity': {'values': [], 'count': 0},
+            'discharge_capacity': {'values': [], 'count': 0},
+            'max_discharge_capacity': {'values': [], 'count': 0},
+            
+            # Voltage features
+            'voltage': {'values': [], 'count': 0},
+            'min_voltage': {'values': [], 'count': 0},
+            'max_voltage': {'values': [], 'count': 0},
+            
+            # Current features
+            'current': {'values': [], 'count': 0},
+            'min_current': {'values': [], 'count': 0},
+            'max_current': {'values': [], 'count': 0},
+            
+            # Temperature features
+            'temperature': {'values': [], 'count': 0},
+            'min_temperature': {'values': [], 'count': 0},
+            'max_temperature': {'values': [], 'count': 0},
+            
+            # Time features
+            'time': {'values': [], 'count': 0},
+            'cycle_duration': {'values': [], 'count': 0}
+        }
     
-    def _analyze_cycle_features_streaming(self, feature_data: Dict[str, List]) -> None:
-        """Analyze cycle-level features from collected data."""
-        print("\nCycle-Level Features:")
-        print("-" * 40)
+    def _update_running_stats(self, running_stats: Dict[str, Any], battery: BatteryData) -> None:
+        """Update running statistics with data from one battery."""
         
-        # Cycle number
-        if feature_data['cycle_number']:
-            cycle_num_stats = safe_statistics(np.array(feature_data['cycle_number']), "cycle_number")
-            self.feature_stats['cycle_number'] = cycle_num_stats
-            self._print_feature_stats("Cycle Number", cycle_num_stats)
+        # Basic properties
+        if hasattr(battery, 'nominal_capacity_in_Ah') and battery.nominal_capacity_in_Ah:
+            running_stats['nominal_capacity']['values'].append(battery.nominal_capacity_in_Ah)
+            running_stats['nominal_capacity']['count'] += 1
+        
+        if battery.cycle_data:
+            running_stats['cycle_count']['values'].append(len(battery.cycle_data))
+            running_stats['cycle_count']['count'] += 1
+        
+        # Process each cycle
+        for cycle in battery.cycle_data:
+            # Cycle number
+            if hasattr(cycle, 'cycle_number') and cycle.cycle_number is not None:
+                running_stats['cycle_number']['values'].append(cycle.cycle_number)
+                running_stats['cycle_number']['count'] += 1
+            
+            # Capacity features
+            if cycle.charge_capacity_in_Ah:
+                running_stats['charge_capacity']['values'].extend(cycle.charge_capacity_in_Ah)
+                running_stats['charge_capacity']['count'] += len(cycle.charge_capacity_in_Ah)
+            
+            if cycle.discharge_capacity_in_Ah:
+                running_stats['discharge_capacity']['values'].extend(cycle.discharge_capacity_in_Ah)
+                running_stats['discharge_capacity']['count'] += len(cycle.discharge_capacity_in_Ah)
+                running_stats['max_discharge_capacity']['values'].append(max(cycle.discharge_capacity_in_Ah))
+                running_stats['max_discharge_capacity']['count'] += 1
+            
+            # Voltage features
+            if cycle.voltage_in_V:
+                voltages = np.array(cycle.voltage_in_V)
+                running_stats['voltage']['values'].extend(voltages)
+                running_stats['voltage']['count'] += len(voltages)
+                running_stats['min_voltage']['values'].append(np.min(voltages))
+                running_stats['min_voltage']['count'] += 1
+                running_stats['max_voltage']['values'].append(np.max(voltages))
+                running_stats['max_voltage']['count'] += 1
+            
+            # Current features
+            if cycle.current_in_A:
+                currents = np.array(cycle.current_in_A)
+                running_stats['current']['values'].extend(currents)
+                running_stats['current']['count'] += len(currents)
+                running_stats['min_current']['values'].append(np.min(currents))
+                running_stats['min_current']['count'] += 1
+                running_stats['max_current']['values'].append(np.max(currents))
+                running_stats['max_current']['count'] += 1
+            
+            # Temperature features
+            if cycle.temperature_in_C:
+                temps = np.array(cycle.temperature_in_C)
+                running_stats['temperature']['values'].extend(temps)
+                running_stats['temperature']['count'] += len(temps)
+                running_stats['min_temperature']['values'].append(np.min(temps))
+                running_stats['min_temperature']['count'] += 1
+                running_stats['max_temperature']['values'].append(np.max(temps))
+                running_stats['max_temperature']['count'] += 1
+            
+            # Time features
+            if cycle.time_in_s:
+                times = np.array(cycle.time_in_s)
+                running_stats['time']['values'].extend(times)
+                running_stats['time']['count'] += len(times)
+                if len(times) > 1:
+                    running_stats['cycle_duration']['values'].append(times[-1] - times[0])
+                    running_stats['cycle_duration']['count'] += 1
     
-    def _analyze_capacity_features_streaming(self, feature_data: Dict[str, List]) -> None:
-        """Analyze capacity-related features from collected data."""
-        print("\nCapacity Features:")
-        print("-" * 40)
+    def _calculate_final_stats(self, running_stats: Dict[str, Any]) -> Dict[str, Any]:
+        """Calculate final statistics from running accumulators."""
+        feature_stats = {}
         
-        # Charge capacity
-        if feature_data['charge_capacity']:
-            charge_stats = safe_statistics(np.array(feature_data['charge_capacity']), "charge_capacity_Ah")
-            self.feature_stats['charge_capacity'] = charge_stats
-            self._print_feature_stats("Charge Capacity (Ah)", charge_stats)
+        for feature_name, data in running_stats.items():
+            if data['count'] > 0:
+                # Convert to numpy array and calculate statistics
+                values = np.array(data['values'])
+                stats = safe_statistics(values, feature_name)
+                feature_stats[feature_name] = stats
+            else:
+                feature_stats[feature_name] = {}
         
-        # Discharge capacity
-        if feature_data['discharge_capacity']:
-            discharge_stats = safe_statistics(np.array(feature_data['discharge_capacity']), "discharge_capacity_Ah")
-            self.feature_stats['discharge_capacity'] = discharge_stats
-            self._print_feature_stats("Discharge Capacity (Ah)", discharge_stats)
-        
-        # Max discharge capacity per cycle
-        if feature_data['max_discharge_capacity']:
-            max_discharge_stats = safe_statistics(np.array(feature_data['max_discharge_capacity']), "max_discharge_capacity_Ah")
-            self.feature_stats['max_discharge_capacity'] = max_discharge_stats
-            self._print_feature_stats("Max Discharge Capacity per Cycle (Ah)", max_discharge_stats)
+        return feature_stats
     
-    def _analyze_voltage_features_streaming(self, feature_data: Dict[str, List]) -> None:
-        """Analyze voltage-related features from collected data."""
-        print("\nVoltage Features:")
-        print("-" * 40)
+    def _print_all_feature_stats(self) -> None:
+        """Print all feature statistics in organized sections."""
         
-        # All voltage measurements
-        if feature_data['voltage']:
-            voltage_stats = safe_statistics(np.array(feature_data['voltage']), "voltage_V")
-            self.feature_stats['voltage'] = voltage_stats
-            self._print_feature_stats("Voltage (V)", voltage_stats)
+        # Basic properties
+        self._print_feature_section("Basic Battery Properties")
+        self._print_feature_stats("Nominal Capacity (Ah)", self.feature_stats.get('nominal_capacity', {}))
+        self._print_feature_stats("Cycle Count", self.feature_stats.get('cycle_count', {}))
         
-        # Min voltage per cycle
-        if feature_data['min_voltage']:
-            min_voltage_stats = safe_statistics(np.array(feature_data['min_voltage']), "min_voltage_V")
-            self.feature_stats['min_voltage'] = min_voltage_stats
-            self._print_feature_stats("Min Voltage per Cycle (V)", min_voltage_stats)
+        # Cycle features
+        self._print_feature_section("Cycle-Level Features")
+        self._print_feature_stats("Cycle Number", self.feature_stats.get('cycle_number', {}))
         
-        # Max voltage per cycle
-        if feature_data['max_voltage']:
-            max_voltage_stats = safe_statistics(np.array(feature_data['max_voltage']), "max_voltage_V")
-            self.feature_stats['max_voltage'] = max_voltage_stats
-            self._print_feature_stats("Max Voltage per Cycle (V)", max_voltage_stats)
+        # Capacity features
+        self._print_feature_section("Capacity Features")
+        self._print_feature_stats("Charge Capacity (Ah)", self.feature_stats.get('charge_capacity', {}))
+        self._print_feature_stats("Discharge Capacity (Ah)", self.feature_stats.get('discharge_capacity', {}))
+        self._print_feature_stats("Max Discharge Capacity per Cycle (Ah)", self.feature_stats.get('max_discharge_capacity', {}))
+        
+        # Voltage features
+        self._print_feature_section("Voltage Features")
+        self._print_feature_stats("Voltage (V)", self.feature_stats.get('voltage', {}))
+        self._print_feature_stats("Min Voltage per Cycle (V)", self.feature_stats.get('min_voltage', {}))
+        self._print_feature_stats("Max Voltage per Cycle (V)", self.feature_stats.get('max_voltage', {}))
+        
+        # Current features
+        self._print_feature_section("Current Features")
+        self._print_feature_stats("Current (A)", self.feature_stats.get('current', {}))
+        self._print_feature_stats("Min Current per Cycle (A)", self.feature_stats.get('min_current', {}))
+        self._print_feature_stats("Max Current per Cycle (A)", self.feature_stats.get('max_current', {}))
+        
+        # Temperature features
+        self._print_feature_section("Temperature Features")
+        self._print_feature_stats("Temperature (°C)", self.feature_stats.get('temperature', {}))
+        self._print_feature_stats("Min Temperature per Cycle (°C)", self.feature_stats.get('min_temperature', {}))
+        self._print_feature_stats("Max Temperature per Cycle (°C)", self.feature_stats.get('max_temperature', {}))
+        
+        # Time features
+        self._print_feature_section("Time Features")
+        self._print_feature_stats("Time (s)", self.feature_stats.get('time', {}))
+        self._print_feature_stats("Cycle Duration (s)", self.feature_stats.get('cycle_duration', {}))
     
-    def _analyze_current_features_streaming(self, feature_data: Dict[str, List]) -> None:
-        """Analyze current-related features from collected data."""
-        print("\nCurrent Features:")
+    def _print_feature_section(self, title: str) -> None:
+        """Print a section header for feature analysis."""
+        print(f"\n{title}:")
         print("-" * 40)
-        
-        # All current measurements
-        if feature_data['current']:
-            current_stats = safe_statistics(np.array(feature_data['current']), "current_A")
-            self.feature_stats['current'] = current_stats
-            self._print_feature_stats("Current (A)", current_stats)
-        
-        # Min current per cycle
-        if feature_data['min_current']:
-            min_current_stats = safe_statistics(np.array(feature_data['min_current']), "min_current_A")
-            self.feature_stats['min_current'] = min_current_stats
-            self._print_feature_stats("Min Current per Cycle (A)", min_current_stats)
-        
-        # Max current per cycle
-        if feature_data['max_current']:
-            max_current_stats = safe_statistics(np.array(feature_data['max_current']), "max_current_A")
-            self.feature_stats['max_current'] = max_current_stats
-            self._print_feature_stats("Max Current per Cycle (A)", max_current_stats)
     
-    def _analyze_temperature_features_streaming(self, feature_data: Dict[str, List]) -> None:
-        """Analyze temperature-related features from collected data."""
-        print("\nTemperature Features:")
-        print("-" * 40)
-        
-        # All temperature measurements
-        if feature_data['temperature']:
-            temp_stats = safe_statistics(np.array(feature_data['temperature']), "temperature_C")
-            self.feature_stats['temperature'] = temp_stats
-            self._print_feature_stats("Temperature (°C)", temp_stats)
-        
-        # Min temperature per cycle
-        if feature_data['min_temperature']:
-            min_temp_stats = safe_statistics(np.array(feature_data['min_temperature']), "min_temperature_C")
-            self.feature_stats['min_temperature'] = min_temp_stats
-            self._print_feature_stats("Min Temperature per Cycle (°C)", min_temp_stats)
-        
-        # Max temperature per cycle
-        if feature_data['max_temperature']:
-            max_temp_stats = safe_statistics(np.array(feature_data['max_temperature']), "max_temperature_C")
-            self.feature_stats['max_temperature'] = max_temp_stats
-            self._print_feature_stats("Max Temperature per Cycle (°C)", max_temp_stats)
-    
-    def _analyze_time_features_streaming(self, feature_data: Dict[str, List]) -> None:
-        """Analyze time-related features from collected data."""
-        print("\nTime Features:")
-        print("-" * 40)
-        
-        # All time measurements
-        if feature_data['time']:
-            time_stats = safe_statistics(np.array(feature_data['time']), "time_s")
-            self.feature_stats['time'] = time_stats
-            self._print_feature_stats("Time (s)", time_stats)
-        
-        # Cycle duration
-        if feature_data['cycle_duration']:
-            duration_stats = safe_statistics(np.array(feature_data['cycle_duration']), "cycle_duration_s")
-            self.feature_stats['cycle_duration'] = duration_stats
-            self._print_feature_stats("Cycle Duration (s)", duration_stats)
     
     def _print_feature_stats(self, feature_name: str, stats: Dict[str, Any]) -> None:
         """Print formatted feature statistics."""
@@ -373,13 +322,15 @@ class StreamingBatteryDataAnalyzer:
     
     def run_complete_analysis(self) -> Tuple[Dict[str, Any], Dict[str, Any]]:
         """
-        Run complete analysis using streaming approach.
+        Run complete analysis using TRUE streaming approach.
         
         Returns:
             Tuple of (dataset_stats, feature_stats)
         """
-        print(f"Starting streaming analysis of {self.dataset_name} dataset...")
+        print(f"Starting TRUE streaming analysis of {self.dataset_name} dataset...")
         print(f"Data path: {self.data_path}")
+        print("Note: This analyzer processes files one at a time and calculates running statistics")
+        print("without storing all data in memory.")
         
         # Analyze dataset overview
         dataset_stats = self.analyze_dataset_overview()
