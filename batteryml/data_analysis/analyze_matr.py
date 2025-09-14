@@ -3,6 +3,7 @@
 
 from pathlib import Path
 import numpy as np
+from tqdm import tqdm
 from .base_analyzer import BaseDataAnalyzer
 
 
@@ -34,7 +35,8 @@ class MATRAnalyzer(BaseDataAnalyzer):
             'qdlin_features': []
         }
         
-        for file_path in battery_files:
+        # Process batteries one at a time to avoid memory issues
+        for file_path in tqdm(battery_files, desc="Analyzing MATR features"):
             battery = self.load_battery_data(file_path)
             if not battery:
                 continue
@@ -74,6 +76,9 @@ class MATRAnalyzer(BaseDataAnalyzer):
             qdlin_stats = self._analyze_qdlin_features(battery)
             if qdlin_stats:
                 matr_stats['qdlin_features'].append(qdlin_stats)
+            
+            # Clear battery from memory
+            del battery
         
         # Save MATR-specific statistics
         self._save_matr_summary(matr_stats)

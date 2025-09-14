@@ -2,6 +2,7 @@
 # Copyright (c) Microsoft Corporation.
 
 from pathlib import Path
+from tqdm import tqdm
 from .base_analyzer import BaseDataAnalyzer
 
 
@@ -51,7 +52,8 @@ class HUSTAnalyzer(BaseDataAnalyzer):
             '10-7': [2, 2, 4], '10-8': [2, 1, 5]
         }
         
-        for file_path in battery_files:
+        # Process batteries one at a time to avoid memory issues
+        for file_path in tqdm(battery_files, desc="Analyzing HUST features"):
             battery = self.load_battery_data(file_path)
             if not battery:
                 continue
@@ -78,6 +80,9 @@ class HUSTAnalyzer(BaseDataAnalyzer):
             
             if all_temps:
                 hust_stats['temperature_ranges'].append((min(all_temps), max(all_temps)))
+            
+            # Clear battery from memory
+            del battery
         
         # Save HUST-specific statistics
         self._save_hust_summary(hust_stats)

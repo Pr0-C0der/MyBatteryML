@@ -2,6 +2,7 @@
 # Copyright (c) Microsoft Corporation.
 
 from pathlib import Path
+from tqdm import tqdm
 from .base_analyzer import BaseDataAnalyzer
 
 
@@ -31,7 +32,8 @@ class UL_PURAnalyzer(BaseDataAnalyzer):
             'voltage_ranges': []
         }
         
-        for file_path in battery_files:
+        # Process batteries one at a time to avoid memory issues
+        for file_path in tqdm(battery_files, desc="Analyzing UL_PUR features"):
             battery = self.load_battery_data(file_path)
             if not battery:
                 continue
@@ -61,6 +63,9 @@ class UL_PURAnalyzer(BaseDataAnalyzer):
             
             if all_voltages:
                 ul_pur_stats['voltage_ranges'].append((min(all_voltages), max(all_voltages)))
+            
+            # Clear battery from memory
+            del battery
         
         # Save UL_PUR-specific statistics
         self._save_ul_pur_summary(ul_pur_stats)

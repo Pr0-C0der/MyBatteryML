@@ -2,6 +2,7 @@
 # Copyright (c) Microsoft Corporation.
 
 from pathlib import Path
+from tqdm import tqdm
 from .base_analyzer import BaseDataAnalyzer
 
 
@@ -31,7 +32,8 @@ class OXAnalyzer(BaseDataAnalyzer):
             'voltage_ranges': []
         }
         
-        for file_path in battery_files:
+        # Process batteries one at a time to avoid memory issues
+        for file_path in tqdm(battery_files, desc="Analyzing OX features"):
             battery = self.load_battery_data(file_path)
             if not battery:
                 continue
@@ -54,6 +56,9 @@ class OXAnalyzer(BaseDataAnalyzer):
             
             if all_voltages:
                 ox_stats['voltage_ranges'].append((min(all_voltages), max(all_voltages)))
+            
+            # Clear battery from memory
+            del battery
         
         # Save OX-specific statistics
         self._save_ox_summary(ox_stats)

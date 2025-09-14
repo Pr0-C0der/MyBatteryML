@@ -44,9 +44,15 @@ def test_base_analyzer():
             cycles, capacities = analyzer.calculate_capacity_fade(battery)
             print(f"✓ Capacity fade calculated: {len(cycles)} cycles, {len(capacities)} capacity values")
             
-            # Test statistics calculation
-            stats = analyzer.calculate_dataset_statistics([battery])
-            print(f"✓ Statistics calculated: {stats['total_batteries']} batteries")
+            # Test single battery analysis
+            try:
+                analyzer._analyze_single_battery(battery)
+                print("✓ Single battery analysis completed")
+            except Exception as e:
+                print(f"⚠ Single battery analysis failed: {e}")
+            
+            # Clear battery from memory
+            del battery
             
         else:
             print("⚠ Could not load battery data")

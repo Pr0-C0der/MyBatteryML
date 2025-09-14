@@ -2,6 +2,7 @@
 # Copyright (c) Microsoft Corporation.
 
 from pathlib import Path
+from tqdm import tqdm
 from .base_analyzer import BaseDataAnalyzer
 
 
@@ -31,7 +32,8 @@ class CALCEAnalyzer(BaseDataAnalyzer):
             'cycle_life_distribution': []
         }
         
-        for file_path in battery_files:
+        # Process batteries one at a time to avoid memory issues
+        for file_path in tqdm(battery_files, desc="Analyzing CALCE features"):
             battery = self.load_battery_data(file_path)
             if not battery:
                 continue
@@ -59,6 +61,9 @@ class CALCEAnalyzer(BaseDataAnalyzer):
                     battery.min_voltage_limit_in_V, 
                     battery.max_voltage_limit_in_V
                 ))
+            
+            # Clear battery from memory
+            del battery
         
         # Save CALCE-specific statistics
         self._save_calce_summary(calce_stats)

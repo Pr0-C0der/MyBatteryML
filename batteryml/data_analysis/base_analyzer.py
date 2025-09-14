@@ -248,60 +248,6 @@ class BaseDataAnalyzer:
         plt.savefig(save_path, dpi=300, bbox_inches='tight')
         plt.close()
     
-    def calculate_dataset_statistics(self, batteries: List[BatteryData]) -> Dict[str, Any]:
-        """Calculate comprehensive statistics for the dataset."""
-        stats = {
-            'total_batteries': len(batteries),
-            'battery_ids': [],
-            'cycle_counts': [],
-            'nominal_capacities': [],
-            'cathode_materials': [],
-            'anode_materials': [],
-            'form_factors': [],
-            'voltage_ranges': [],
-            'capacity_fade_rates': [],
-            'final_capacities': [],
-            'cycle_lives': []
-        }
-        
-        for battery in batteries:
-            stats['battery_ids'].append(battery.cell_id)
-            stats['cycle_counts'].append(len(battery.cycle_data))
-            
-            if battery.nominal_capacity_in_Ah:
-                stats['nominal_capacities'].append(battery.nominal_capacity_in_Ah)
-            
-            if battery.cathode_material:
-                stats['cathode_materials'].append(battery.cathode_material)
-            
-            if battery.anode_material:
-                stats['anode_materials'].append(battery.anode_material)
-            
-            if battery.form_factor:
-                stats['form_factors'].append(battery.form_factor)
-            
-            # Calculate voltage range
-            all_voltages = []
-            for cycle_data in battery.cycle_data:
-                if cycle_data.voltage_in_V:
-                    all_voltages.extend(cycle_data.voltage_in_V)
-            
-            if all_voltages:
-                stats['voltage_ranges'].append((min(all_voltages), max(all_voltages)))
-            
-            # Calculate capacity fade
-            cycles, capacities = self.calculate_capacity_fade(battery)
-            if len(cycles) > 1:
-                # Calculate fade rate (capacity loss per cycle)
-                if len(capacities) > 10:  # Only for batteries with enough data
-                    initial_cap = np.mean(capacities[:5])  # Average of first 5 cycles
-                    final_cap = np.mean(capacities[-5:])   # Average of last 5 cycles
-                    fade_rate = (initial_cap - final_cap) / len(cycles)
-                    stats['capacity_fade_rates'].append(fade_rate)
-                    stats['final_capacities'].append(final_cap)
-                    stats['cycle_lives'].append(len(cycles))
-        
-        return stats
     
     def create_summary_table(self, stats: Dict[str, Any]) -> pd.DataFrame:
         """Create a summary table of dataset statistics."""
@@ -376,32 +322,95 @@ class BaseDataAnalyzer:
         
         print(f"Found {len(battery_files)} battery files")
         
-        # Load all batteries for statistics (this might be memory intensive for large datasets)
-        print("Loading battery data for statistics...")
-        batteries = []
-        for file_path in tqdm(battery_files, desc="Loading batteries"):
-            battery = self.load_battery_data(file_path)
-            if battery:
-                batteries.append(battery)
-        
-        if not batteries:
-            print("No valid battery data found")
-            return
-        
-        # Calculate statistics
-        print("Calculating dataset statistics...")
-        stats = self.calculate_dataset_statistics(batteries)
+        # Initialize statistics collection
+        print("Collecting statistics from individual batteries...")
+        stats = self._collect_statistics_incrementally(battery_files)
         
         # Create summary table
         summary_table = self.create_summary_table(stats)
         summary_table.to_csv(self.output_dir / "dataset_summary.csv", index=False)
         print(f"Summary table saved to {self.output_dir / 'dataset_summary.csv'}")
         
-        # Generate plots for each battery
+        # Generate plots for each battery (one at a time)
         print("Generating plots for individual batteries...")
-        for battery in tqdm(batteries, desc="Generating plots"):
-            cell_id = battery.cell_id.replace('/', '_').replace('\\', '_')  # Safe filename
-            
+        for file_path in tqdm(battery_files, desc="Processing batteries"):
+            battery = self.load_battery_data(file_path)
+            if battery:
+                self._analyze_single_battery(battery)
+            else:
+                print(f"Warning: Could not load battery from {file_path}")
+        
+        print(f"Analysis complete! Results saved to {self.output_dir}")
+        print(f"Plots saved in subdirectories:")
+        print(f"  - Capacity fade: {self.capacity_fade_dir}")
+        print(f"  - Voltage vs Capacity: {self.voltage_capacity_dir}")
+        print(f"  - QC vs QD: {self.qc_qd_dir}")
+        print(f"  - Current vs Time: {self.current_time_dir}")
+        print(f"  - Voltage vs Time: {self.voltage_time_dir}")
+    
+    def _collect_statistics_incrementally(self, battery_files):
+        """Collect statistics by processing batteries one at a time."""
+        stats = {
+            'total_batteries': 0,
+            'battery_ids': [],
+            'cycle_counts': [],
+            'nominal_capacities': [],
+            'cathode_materials': [],
+            'anode_materials': [],
+            'form_factors': [],
+            'voltage_ranges': [],
+            'capacity_fade_rates': [],
+            'final_capacities': [],
+            'cycle_lives': []
+        }
+        
+        for file_path in tqdm(battery_files, desc="Collecting statistics"):
+            battery = self.load_battery_data(file_path)
+            if battery:
+                stats['total_batteries'] += 1
+                stats['battery_ids'].append(battery.cell_id)
+                stats['cycle_counts'].append(len(battery.cycle_data))
+                
+                if battery.nominal_capacity_in_Ah:
+                    stats['nominal_capacities'].append(battery.nominal_capacity_in_Ah)
+                
+                if battery.cathode_material:
+                    stats['cathode_materials'].append(battery.cathode_material)
+                
+                if battery.anode_material:
+                    stats['anode_materials'].append(battery.anode_material)
+                
+                if battery.form_factor:
+                    stats['form_factors'].append(battery.form_factor)
+                
+                # Calculate voltage range
+                all_voltages = []
+                for cycle_data in battery.cycle_data:
+                    if cycle_data.voltage_in_V:
+                        all_voltages.extend(cycle_data.voltage_in_V)
+                
+                if all_voltages:
+                    stats['voltage_ranges'].append((min(all_voltages), max(all_voltages)))
+                
+                # Calculate capacity fade
+                cycles, capacities = self.calculate_capacity_fade(battery)
+                if len(cycles) > 1:
+                    # Calculate fade rate (capacity loss per cycle)
+                    if len(capacities) > 10:  # Only for batteries with enough data
+                        initial_cap = np.mean(capacities[:5])  # Average of first 5 cycles
+                        final_cap = np.mean(capacities[-5:])   # Average of last 5 cycles
+                        fade_rate = (initial_cap - final_cap) / len(cycles)
+                        stats['capacity_fade_rates'].append(fade_rate)
+                        stats['final_capacities'].append(final_cap)
+                        stats['cycle_lives'].append(len(cycles))
+        
+        return stats
+    
+    def _analyze_single_battery(self, battery):
+        """Analyze a single battery and generate all plots."""
+        cell_id = battery.cell_id.replace('/', '_').replace('\\', '_')  # Safe filename
+        
+        try:
             # Capacity fade plot
             self.plot_capacity_fade(battery, 
                                   self.capacity_fade_dir / f"{cell_id}_capacity_fade.png")
@@ -421,11 +430,7 @@ class BaseDataAnalyzer:
             # Voltage vs time plot
             self.plot_voltage_time(battery, 
                                  self.voltage_time_dir / f"{cell_id}_voltage_time.png")
-        
-        print(f"Analysis complete! Results saved to {self.output_dir}")
-        print(f"Plots saved in subdirectories:")
-        print(f"  - Capacity fade: {self.capacity_fade_dir}")
-        print(f"  - Voltage vs Capacity: {self.voltage_capacity_dir}")
-        print(f"  - QC vs QD: {self.qc_qd_dir}")
-        print(f"  - Current vs Time: {self.current_time_dir}")
-        print(f"  - Voltage vs Time: {self.voltage_time_dir}")
+            
+        except Exception as e:
+            print(f"Error analyzing battery {battery.cell_id}: {e}")
+            # Continue with next battery instead of failing completely

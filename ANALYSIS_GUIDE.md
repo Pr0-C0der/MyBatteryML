@@ -143,9 +143,11 @@ Cycle Life Statistics:
 The analysis is designed to handle large datasets efficiently:
 
 - **One Battery at a Time**: Processes individual pickle files to avoid memory issues
+- **Incremental Statistics**: Collects statistics without loading all batteries into memory
 - **Immediate Cleanup**: Closes plots and clears memory after each battery
 - **Progress Tracking**: Shows progress with tqdm progress bars
 - **Error Handling**: Continues analysis even if some batteries fail
+- **Memory Efficient**: Can handle datasets with thousands of batteries without memory issues
 
 ## Troubleshooting
 

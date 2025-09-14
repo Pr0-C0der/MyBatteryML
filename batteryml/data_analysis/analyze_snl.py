@@ -3,6 +3,7 @@
 
 from pathlib import Path
 import numpy as np
+from tqdm import tqdm
 from .base_analyzer import BaseDataAnalyzer
 
 
@@ -34,7 +35,8 @@ class SNLAnalyzer(BaseDataAnalyzer):
             'cycle_life_distribution': []
         }
         
-        for file_path in battery_files:
+        # Process batteries one at a time to avoid memory issues
+        for file_path in tqdm(battery_files, desc="Analyzing SNL features"):
             battery = self.load_battery_data(file_path)
             if not battery:
                 continue
@@ -59,6 +61,9 @@ class SNLAnalyzer(BaseDataAnalyzer):
             if capacities:
                 snl_stats['capacity_ranges'].append((min(capacities), max(capacities)))
                 snl_stats['cycle_life_distribution'].append(len(cycles))
+            
+            # Clear battery from memory
+            del battery
         
         # Save SNL-specific statistics
         self._save_snl_summary(snl_stats)
