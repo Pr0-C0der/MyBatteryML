@@ -72,6 +72,52 @@ def run_analysis(dataset_name: str, data_path: str, output_dir: str = None):
         return False
 
 
+def run_combined_plots(dataset_name: str, data_path: str, output_dir: str = None):
+    """
+    Run combined plots generation for a specific dataset.
+    
+    Args:
+        dataset_name: Name of the dataset
+        data_path: Path to the processed data directory
+        output_dir: Output directory for results (optional)
+    """
+    if output_dir is None:
+        output_dir = f"{dataset_name.lower()}_combined_plots"
+    
+    print(f"Generating combined plots for {dataset_name} dataset...")
+    print(f"Data path: {data_path}")
+    print(f"Output directory: {output_dir}")
+    print("-" * 50)
+    
+    try:
+        from .combined_plots import CombinedPlotGenerator
+        from .base_analyzer import BaseDataAnalyzer
+        
+        # Create analyzer
+        analyzer = BaseDataAnalyzer(data_path, output_dir)
+        battery_files = analyzer.get_battery_files()
+        
+        if not battery_files:
+            print(f"No battery files found in {data_path}")
+            return False
+        
+        # Create combined plot generator
+        plot_generator = CombinedPlotGenerator(Path(output_dir), num_batteries=20)
+        
+        # Generate combined plots
+        plot_generator.generate_combined_plots(battery_files, analyzer)
+        
+        print(f"\n{dataset_name} combined plots completed successfully!")
+        print(f"Results saved to: {output_dir}/combined_plots/")
+        return True
+        
+    except Exception as e:
+        print(f"Error during {dataset_name} combined plots generation: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return False
+
+
 def run_all_analyses(base_data_path: str, base_output_dir: str = "all_analysis"):
     """
     Run analysis for all available datasets.
@@ -141,6 +187,9 @@ Examples:
   
   # Analyze with custom output directory
   python run_analysis.py --dataset MATR --data_path data/processed/MATR --output_dir my_analysis
+  
+  # Generate combined plots only
+  python run_analysis.py --combined-plots MATR --data_path data/processed/MATR
         """
     )
     
@@ -151,6 +200,9 @@ Examples:
                       help='Specific dataset to analyze')
     group.add_argument('--all', action='store_true',
                       help='Analyze all available datasets')
+    group.add_argument('--combined-plots', type=str,
+                      choices=['CALCE', 'HUST', 'MATR', 'SNL', 'HNEI', 'RWTH', 'UL_PUR', 'OX'],
+                      help='Generate combined plots only for specific dataset')
     
     # Path arguments
     parser.add_argument('--data_path', type=str, required=True,
@@ -172,6 +224,11 @@ Examples:
         
         # Exit with error code if any analysis failed
         if not all(results.values()):
+            sys.exit(1)
+    elif args.combined_plots:
+        # Generate combined plots only
+        success = run_combined_plots(args.combined_plots, str(data_path), args.output_dir)
+        if not success:
             sys.exit(1)
     else:
         success = run_analysis(args.dataset, str(data_path), args.output_dir)

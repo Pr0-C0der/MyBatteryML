@@ -12,6 +12,8 @@ This module provides comprehensive data analysis tools for battery datasets proc
 
 ## Generated Plots
 
+### Individual Battery Plots
+
 For each battery, the following plots are generated:
 
 1. **Capacity Fade Curves**: Discharge capacity vs cycle number
@@ -19,6 +21,17 @@ For each battery, the following plots are generated:
 3. **Charge vs Discharge Capacity**: QC vs QD scatter plots
 4. **Current vs Time**: Current profiles for selected cycles
 5. **Voltage vs Time**: Voltage profiles for selected cycles
+
+### Combined Plots (New Feature)
+
+After generating individual plots, combined plots are automatically generated for 20 randomly selected batteries:
+
+1. **Combined Capacity Fade**: All selected batteries on one plot
+2. **Combined Voltage vs Capacity**: Multiple batteries' voltage profiles
+3. **Combined QC vs QD**: Scatter plot of all selected batteries
+4. **Combined Current vs Time**: Current profiles for multiple batteries
+5. **Combined Voltage vs Time**: Voltage profiles for multiple batteries
+6. **Capacity Distribution**: Statistical distribution plots
 
 ## Output Structure
 
@@ -30,6 +43,13 @@ analysis_output/
 │   ├── qc_qd/                  # Charge vs discharge capacity plots
 │   ├── current_time/           # Current vs time plots
 │   └── voltage_time/           # Voltage vs time plots
+├── combined_plots/             # Combined plots for random selection
+│   ├── combined_capacity_fade.png
+│   ├── combined_voltage_capacity.png
+│   ├── combined_qc_qd.png
+│   ├── combined_current_time.png
+│   ├── combined_voltage_time.png
+│   └── capacity_distribution.png
 ├── dataset_summary.csv         # Overall dataset statistics
 └── {dataset}_summary.txt       # Dataset-specific summary
 ```

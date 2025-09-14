@@ -36,6 +36,18 @@ python -m batteryml.data_analysis.run_analysis --dataset CALCE --data_path data/
 
 # Analyze all datasets
 python -m batteryml.data_analysis.run_analysis --all --data_path data/processed
+
+# Generate combined plots only
+python -m batteryml.data_analysis.run_analysis --combined-plots MATR --data_path data/processed/MATR
+```
+
+#### Option C: Combined Plots (Quick Overview)
+```bash
+# Generate combined plots for random batteries
+python generate_combined_plots.py --data_path data/processed/MATR --num_batteries 20
+
+# Or use command line directly
+python -m batteryml.data_analysis.run_analysis --combined-plots MATR --data_path data/processed/MATR
 ```
 
 ## What Gets Generated
@@ -50,12 +62,23 @@ For every battery pickle file, 5 types of plots are generated:
 - **Current vs Time**: `{battery_id}_current_time.png`
 - **Voltage vs Time**: `{battery_id}_voltage_time.png`
 
-### 2. Summary Tables
+### 2. Combined Plots (Optional)
+
+For a quick overview of the dataset, combined plots are generated for 20 randomly selected batteries:
+
+- **Combined Capacity Fade**: All selected batteries on one plot
+- **Combined Voltage vs Capacity**: Multiple batteries' voltage profiles
+- **Combined QC vs QD**: Scatter plot of all selected batteries
+- **Combined Current vs Time**: Current profiles for multiple batteries
+- **Combined Voltage vs Time**: Voltage profiles for multiple batteries
+- **Capacity Distribution**: Statistical distribution plots
+
+### 3. Summary Tables
 
 - **Overall Statistics**: `dataset_summary.csv` - Comprehensive statistics table
 - **Dataset-Specific**: `{dataset}_summary.txt` - Custom analysis for each dataset type
 
-### 3. Directory Structure
+### 4. Directory Structure
 
 ```
 analysis_output/
@@ -65,6 +88,13 @@ analysis_output/
 │   ├── qc_qd/                  # Charge vs discharge capacity
 │   ├── current_time/           # Current vs time profiles
 │   └── voltage_time/           # Voltage vs time profiles
+├── combined_plots/             # Combined plots for random selection
+│   ├── combined_capacity_fade.png
+│   ├── combined_voltage_capacity.png
+│   ├── combined_qc_qd.png
+│   ├── combined_current_time.png
+│   ├── combined_voltage_time.png
+│   └── capacity_distribution.png
 ├── dataset_summary.csv         # Overall statistics
 └── {dataset}_summary.txt       # Dataset-specific analysis
 ```

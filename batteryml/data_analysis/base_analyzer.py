@@ -340,13 +340,18 @@ class BaseDataAnalyzer:
             else:
                 print(f"Warning: Could not load battery from {file_path}")
         
+        # Generate combined plots for random selection of batteries
+        print("\nGenerating combined plots for random selection of batteries...")
+        self._generate_combined_plots(battery_files)
+        
         print(f"Analysis complete! Results saved to {self.output_dir}")
-        print(f"Plots saved in subdirectories:")
+        print(f"Individual plots saved in subdirectories:")
         print(f"  - Capacity fade: {self.capacity_fade_dir}")
         print(f"  - Voltage vs Capacity: {self.voltage_capacity_dir}")
         print(f"  - QC vs QD: {self.qc_qd_dir}")
         print(f"  - Current vs Time: {self.current_time_dir}")
         print(f"  - Voltage vs Time: {self.voltage_time_dir}")
+        print(f"Combined plots saved in: {self.output_dir}/combined_plots/")
     
     def _collect_statistics_incrementally(self, battery_files):
         """Collect statistics by processing batteries one at a time."""
@@ -434,3 +439,21 @@ class BaseDataAnalyzer:
         except Exception as e:
             print(f"Error analyzing battery {battery.cell_id}: {e}")
             # Continue with next battery instead of failing completely
+    
+    def _generate_combined_plots(self, battery_files):
+        """Generate combined plots for randomly selected batteries."""
+        try:
+            from .combined_plots import CombinedPlotGenerator
+            
+            # Create combined plot generator
+            plot_generator = CombinedPlotGenerator(self.output_dir, num_batteries=20)
+            
+            # Generate combined plots
+            plot_generator.generate_combined_plots(battery_files, self)
+            
+        except ImportError as e:
+            print(f"Warning: Could not import combined plots module: {e}")
+            print("Combined plots will be skipped.")
+        except Exception as e:
+            print(f"Warning: Error generating combined plots: {e}")
+            print("Combined plots will be skipped.")

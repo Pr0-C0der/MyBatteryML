@@ -10,6 +10,7 @@ from .analyze_hnei import HNEIAnalyzer
 from .analyze_rwth import RWTHAnalyzer
 from .analyze_ul_pur import UL_PURAnalyzer
 from .analyze_ox import OXAnalyzer
+from .combined_plots import CombinedPlotGenerator
 
 __all__ = [
     'BaseDataAnalyzer',
@@ -20,5 +21,6 @@ __all__ = [
     'HNEIAnalyzer',
     'RWTHAnalyzer',
     'UL_PURAnalyzer',
-    'OXAnalyzer'
+    'OXAnalyzer',
+    'CombinedPlotGenerator'
 ]
