@@ -3,259 +3,201 @@
 
 import os
 import pickle
-import pandas as pd
 import numpy as np
+import pandas as pd
 from pathlib import Path
-from typing import List, Dict, Any, Optional
+from typing import Dict, List, Tuple, Any, Optional
 import warnings
-from tqdm import tqdm
 
 from batteryml.data.battery_data import BatteryData
 
 
-def load_battery_data(data_path: str) -> List[BatteryData]:
-    """
-    Load battery data from a directory containing pickle files.
+class AnalysisUtils:
+    """Utility functions for battery data analysis."""
     
-    Args:
-        data_path: Path to directory containing .pkl files
+    @staticmethod
+    def safe_load_battery(file_path: str) -> Optional[BatteryData]:
+        """
+        Safely load a battery pickle file with error handling.
         
-    Returns:
-        List of BatteryData objects
-    """
-    data_path = Path(data_path)
-    if not data_path.exists():
-        raise FileNotFoundError(f"Data path does not exist: {data_path}")
-    
-    battery_files = list(data_path.glob("*.pkl"))
-    if not battery_files:
-        raise ValueError(f"No .pkl files found in {data_path}")
-    
-    batteries = []
-    failed_files = []
-    
-    print(f"Loading {len(battery_files)} battery data files...")
-    for file_path in tqdm(battery_files, desc="Loading battery data", unit="files"):
+        Args:
+            file_path: Path to the battery pickle file
+            
+        Returns:
+            BatteryData object or None if loading fails
+        """
         try:
             with open(file_path, 'rb') as f:
-                battery = BatteryData.load(file_path)
-                batteries.append(battery)
+                battery_data = BatteryData.load(file_path)
+            return battery_data
         except Exception as e:
-            failed_files.append((file_path, str(e)))
-            warnings.warn(f"Failed to load {file_path}: {e}")
+            print(f"Warning: Failed to load {file_path}: {str(e)}")
+            return None
     
-    if failed_files:
-        print(f"Warning: {len(failed_files)} files failed to load")
-    
-    return batteries
-
-
-def get_battery_files(data_path: str) -> List[Path]:
-    """
-    Get list of battery pickle files without loading them.
-
-    Args:
-        data_path: Path to directory containing .pkl files
-
-    Returns:
-        List of Path objects to .pkl files
-
-    Raises:
-        FileNotFoundError: If data_path doesn't exist
-        ValueError: If no .pkl files found
-    """
-    data_path = Path(data_path)
-    if not data_path.exists():
-        raise FileNotFoundError(f"Data path does not exist: {data_path}")
-    
-    battery_files = list(data_path.glob("*.pkl"))
-    if not battery_files:
-        raise ValueError(f"No .pkl files found in {data_path}")
-    
-    return battery_files
-
-
-def process_battery_file(file_path: Path) -> Optional[BatteryData]:
-    """
-    Process a single battery file and return the data.
-
-    Args:
-        file_path: Path to the .pkl file
-
-    Returns:
-        BatteryData object or None if loading failed
-    """
-    try:
-        with open(file_path, 'rb') as f:
-            battery = BatteryData.load(file_path)
-            return battery
-    except Exception as e:
-        warnings.warn(f"Failed to load {file_path}: {e}")
-        return None
-
-
-def get_dataset_stats_streaming(data_path: str) -> Dict[str, Any]:
-    """
-    Get basic statistics about a dataset by processing files one at a time.
-    This is memory-efficient for large datasets.
-
-    Args:
-        data_path: Path to directory containing .pkl files
-
-    Returns:
-        Dictionary containing dataset statistics
-    """
-    battery_files = get_battery_files(data_path)
-    
-    stats = {
-        'total_batteries': 0,
-        'datasets': {},
-        'chemistries': {},
-        'capacities': [],
-        'cycle_lives': [],
-        'voltages': [],
-        'temperatures': []
-    }
-    
-    print(f"Processing {len(battery_files)} battery files one at a time...")
-    
-    for file_path in tqdm(battery_files, desc="Processing battery files", unit="files"):
-        battery = process_battery_file(file_path)
-        if battery is None:
-            continue
+    @staticmethod
+    def get_battery_files(dataset_path: str) -> List[str]:
+        """
+        Get all battery pickle files from a dataset directory.
+        
+        Args:
+            dataset_path: Path to the dataset directory
             
-        stats['total_batteries'] += 1
+        Returns:
+            List of battery file paths
+        """
+        dataset_path = Path(dataset_path)
+        if not dataset_path.exists():
+            print(f"Warning: Dataset path {dataset_path} does not exist")
+            return []
         
-        # Extract dataset name from cell_id (assume format: DATASET_CELLID)
-        dataset_name = battery.cell_id.split('_')[0] if '_' in battery.cell_id else 'Unknown'
-        if dataset_name not in stats['datasets']:
-            stats['datasets'][dataset_name] = 0
-        stats['datasets'][dataset_name] += 1
-        
-        # Extract chemistry information
-        cathode = getattr(battery, 'cathode_material', 'Unknown')
-        if cathode not in stats['chemistries']:
-            stats['chemistries'][cathode] = 0
-        stats['chemistries'][cathode] += 1
-        
-        # Collect capacity information
-        if hasattr(battery, 'nominal_capacity_in_Ah') and battery.nominal_capacity_in_Ah:
-            stats['capacities'].append(battery.nominal_capacity_in_Ah)
-        
-        # Collect cycle life information
-        if battery.cycle_data:
-            stats['cycle_lives'].append(len(battery.cycle_data))
-        
-        # Collect voltage and temperature data from cycles (sample to avoid memory issues)
-        voltage_samples = []
-        temp_samples = []
-        for cycle in battery.cycle_data:
-            if cycle.voltage_in_V and len(voltage_samples) < 1000:  # Limit samples
-                voltage_samples.extend(cycle.voltage_in_V[:100])  # Take first 100 points
-            if cycle.temperature_in_C and len(temp_samples) < 1000:  # Limit samples
-                temp_samples.extend(cycle.temperature_in_C[:100])  # Take first 100 points
-        
-        stats['voltages'].extend(voltage_samples)
-        stats['temperatures'].extend(temp_samples)
+        battery_files = list(dataset_path.glob("*.pkl"))
+        return [str(f) for f in battery_files]
     
-    # Convert lists to numpy arrays for easier statistics
-    stats['capacities'] = np.array(stats['capacities']) if stats['capacities'] else np.array([])
-    stats['cycle_lives'] = np.array(stats['cycle_lives']) if stats['cycle_lives'] else np.array([])
-    stats['voltages'] = np.array(stats['voltages']) if stats['voltages'] else np.array([])
-    stats['temperatures'] = np.array(stats['temperatures']) if stats['temperatures'] else np.array([])
-    
-    return stats
-
-
-def get_dataset_stats(batteries: List[BatteryData]) -> Dict[str, Any]:
-    """
-    Get basic statistics about a dataset.
-    
-    Args:
-        batteries: List of BatteryData objects
+    @staticmethod
+    def extract_cycle_statistics(cycle_data) -> Dict[str, Any]:
+        """
+        Extract statistics from cycle data.
         
-    Returns:
-        Dictionary containing dataset statistics
-    """
-    if not batteries:
-        return {}
-    
-    stats = {
-        'total_batteries': len(batteries),
-        'datasets': {},
-        'chemistries': {},
-        'capacities': [],
-        'cycle_lives': [],
-        'voltages': [],
-        'temperatures': []
-    }
-    
-    for battery in batteries:
-        # Extract dataset name from cell_id (assume format: DATASET_CELLID)
-        dataset_name = battery.cell_id.split('_')[0] if '_' in battery.cell_id else 'Unknown'
-        if dataset_name not in stats['datasets']:
-            stats['datasets'][dataset_name] = 0
-        stats['datasets'][dataset_name] += 1
+        Args:
+            cycle_data: List of CycleData objects
+            
+        Returns:
+            Dictionary of cycle statistics
+        """
+        if not cycle_data:
+            return {}
         
-        # Extract chemistry information
-        cathode = getattr(battery, 'cathode_material', 'Unknown')
-        if cathode not in stats['chemistries']:
-            stats['chemistries'][cathode] = 0
-        stats['chemistries'][cathode] += 1
+        stats = {
+            'total_cycles': len(cycle_data),
+            'cycle_numbers': [cycle.cycle_number for cycle in cycle_data]
+        }
         
-        # Collect capacity information
-        if hasattr(battery, 'nominal_capacity_in_Ah') and battery.nominal_capacity_in_Ah:
-            stats['capacities'].append(battery.nominal_capacity_in_Ah)
+        # Extract discharge capacity statistics
+        discharge_capacities = []
+        charge_capacities = []
+        voltages = []
+        currents = []
+        temperatures = []
         
-        # Collect cycle life information
-        if battery.cycle_data:
-            stats['cycle_lives'].append(len(battery.cycle_data))
-        
-        # Collect voltage and temperature data from cycles
-        for cycle in battery.cycle_data:
+        for cycle in cycle_data:
+            if cycle.discharge_capacity_in_Ah:
+                discharge_capacities.extend(cycle.discharge_capacity_in_Ah)
+            if cycle.charge_capacity_in_Ah:
+                charge_capacities.extend(cycle.charge_capacity_in_Ah)
             if cycle.voltage_in_V:
-                stats['voltages'].extend(cycle.voltage_in_V)
+                voltages.extend(cycle.voltage_in_V)
+            if cycle.current_in_A:
+                currents.extend(cycle.current_in_A)
             if cycle.temperature_in_C:
-                stats['temperatures'].extend(cycle.temperature_in_C)
-    
-    # Convert lists to numpy arrays for easier statistics
-    stats['capacities'] = np.array(stats['capacities']) if stats['capacities'] else np.array([])
-    stats['cycle_lives'] = np.array(stats['cycle_lives']) if stats['cycle_lives'] else np.array([])
-    stats['voltages'] = np.array(stats['voltages']) if stats['voltages'] else np.array([])
-    stats['temperatures'] = np.array(stats['temperatures']) if stats['temperatures'] else np.array([])
-    
-    return stats
-
-
-def safe_statistics(data: np.ndarray, name: str = "data") -> Dict[str, Any]:
-    """
-    Calculate safe statistics for an array, handling empty arrays and NaN values.
-    
-    Args:
-        data: Input array
-        name: Name of the data for error messages
+                temperatures.extend(cycle.temperature_in_C)
         
-    Returns:
-        Dictionary containing statistics
-    """
-    if len(data) == 0:
-        return {f"{name}_count": 0, f"{name}_min": np.nan, f"{name}_max": np.nan, 
-                f"{name}_mean": np.nan, f"{name}_median": np.nan, f"{name}_std": np.nan}
+        # Calculate statistics for each measurement type
+        for data_type, values in [
+            ('discharge_capacity', discharge_capacities),
+            ('charge_capacity', charge_capacities),
+            ('voltage', voltages),
+            ('current', currents),
+            ('temperature', temperatures)
+        ]:
+            if values:
+                values = np.array(values)
+                values = values[~np.isnan(values)]  # Remove NaN values
+                if len(values) > 0:
+                    stats[f'{data_type}_min'] = float(np.min(values))
+                    stats[f'{data_type}_max'] = float(np.max(values))
+                    stats[f'{data_type}_mean'] = float(np.mean(values))
+                    stats[f'{data_type}_median'] = float(np.median(values))
+                    stats[f'{data_type}_std'] = float(np.std(values))
+                    stats[f'{data_type}_count'] = len(values)
+                else:
+                    stats[f'{data_type}_min'] = np.nan
+                    stats[f'{data_type}_max'] = np.nan
+                    stats[f'{data_type}_mean'] = np.nan
+                    stats[f'{data_type}_median'] = np.nan
+                    stats[f'{data_type}_std'] = np.nan
+                    stats[f'{data_type}_count'] = 0
+            else:
+                stats[f'{data_type}_min'] = np.nan
+                stats[f'{data_type}_max'] = np.nan
+                stats[f'{data_type}_mean'] = np.nan
+                stats[f'{data_type}_median'] = np.nan
+                stats[f'{data_type}_std'] = np.nan
+                stats[f'{data_type}_count'] = 0
+        
+        return stats
     
-    # Remove NaN and infinite values
-    clean_data = data[~np.isnan(data) & np.isfinite(data)]
+    @staticmethod
+    def extract_battery_metadata(battery_data: BatteryData) -> Dict[str, Any]:
+        """
+        Extract metadata from battery data.
+        
+        Args:
+            battery_data: BatteryData object
+            
+        Returns:
+            Dictionary of battery metadata
+        """
+        metadata = {
+            'cell_id': battery_data.cell_id,
+            'form_factor': battery_data.form_factor,
+            'anode_material': battery_data.anode_material,
+            'cathode_material': battery_data.cathode_material,
+            'electrolyte_material': battery_data.electrolyte_material,
+            'nominal_capacity_in_Ah': battery_data.nominal_capacity_in_Ah,
+            'depth_of_charge': battery_data.depth_of_charge,
+            'depth_of_discharge': battery_data.depth_of_discharge,
+            'already_spent_cycles': battery_data.already_spent_cycles,
+            'max_voltage_limit_in_V': battery_data.max_voltage_limit_in_V,
+            'min_voltage_limit_in_V': battery_data.min_voltage_limit_in_V,
+            'max_current_limit_in_A': battery_data.max_current_limit_in_A,
+            'min_current_limit_in_A': battery_data.min_current_limit_in_A,
+            'reference': battery_data.reference,
+            'description': battery_data.description
+        }
+        
+        return metadata
     
-    if len(clean_data) == 0:
-        return {f"{name}_count": len(data), f"{name}_min": np.nan, f"{name}_max": np.nan,
-                f"{name}_mean": np.nan, f"{name}_median": np.nan, f"{name}_std": np.nan}
+    @staticmethod
+    def calculate_cycle_life(battery_data: BatteryData, eol_threshold: float = 0.8) -> int:
+        """
+        Calculate cycle life (RUL) for a battery.
+        
+        Args:
+            battery_data: BatteryData object
+            eol_threshold: End-of-life threshold (fraction of nominal capacity)
+            
+        Returns:
+            Cycle life (number of cycles until EOL)
+        """
+        if not battery_data.cycle_data or not battery_data.nominal_capacity_in_Ah:
+            return 0
+        
+        eol_capacity = battery_data.nominal_capacity_in_Ah * eol_threshold
+        
+        for i, cycle in enumerate(battery_data.cycle_data):
+            if cycle.discharge_capacity_in_Ah:
+                max_discharge = max(cycle.discharge_capacity_in_Ah)
+                if max_discharge <= eol_capacity:
+                    return i + 1
+        
+        return len(battery_data.cycle_data)
     
-    return {
-        f"{name}_count": len(clean_data),
-        f"{name}_min": float(np.min(clean_data)),
-        f"{name}_max": float(np.max(clean_data)),
-        f"{name}_mean": float(np.mean(clean_data)),
-        f"{name}_median": float(np.median(clean_data)),
-        f"{name}_std": float(np.std(clean_data)),
-        f"{name}_q25": float(np.percentile(clean_data, 25)),
-        f"{name}_q75": float(np.percentile(clean_data, 75))
-    }
+    @staticmethod
+    def safe_divide(numerator: float, denominator: float, default: float = 0.0) -> float:
+        """
+        Safely divide two numbers, returning default if denominator is zero.
+        
+        Args:
+            numerator: Numerator value
+            denominator: Denominator value
+            default: Default value if division by zero
+            
+        Returns:
+            Division result or default value
+        """
+        try:
+            if denominator == 0 or np.isnan(denominator) or np.isinf(denominator):
+                return default
+            return numerator / denominator
+        except (ZeroDivisionError, TypeError, ValueError):
+            return default

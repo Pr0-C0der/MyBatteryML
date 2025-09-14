@@ -1,15 +1,16 @@
 # Licensed under the MIT License.
 # Copyright (c) Microsoft Corporation.
 
-"""Data analysis utilities for battery datasets."""
+"""
+BatteryML Data Analysis Module
 
-from .analyzer import BatteryDataAnalyzer
-from .visualization import BatteryDataVisualizer
-from .utils import load_battery_data, get_dataset_stats
+This module provides comprehensive data analysis tools for battery datasets,
+including individual battery analysis, dataset-level statistics, and visualization utilities.
+"""
 
-__all__ = [
-    'BatteryDataAnalyzer',
-    'BatteryDataVisualizer', 
-    'load_battery_data',
-    'get_dataset_stats'
-]
+from .battery_analyzer import BatteryAnalyzer
+from .dataset_analyzer import DatasetAnalyzer
+from .visualization import AnalysisVisualizer
+from .utils import AnalysisUtils
+
+__all__ = ['BatteryAnalyzer', 'DatasetAnalyzer', 'AnalysisVisualizer', 'AnalysisUtils']
