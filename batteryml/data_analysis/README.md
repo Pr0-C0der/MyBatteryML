@@ -8,6 +8,8 @@ This module provides comprehensive data analysis tools for battery datasets in t
 - **Feature Statistics**: Comprehensive analysis of all features including min, max, mean, median, standard deviation, and quartiles
 - **Visualizations**: Interactive plots and charts for data exploration
 - **Export Capabilities**: Save results as CSV files and summary reports
+- **Streaming Analysis**: Memory-efficient processing that handles large datasets by processing files one at a time
+- **Progress Tracking**: Beautiful tqdm progress bars for real-time monitoring
 
 ## Quick Start
 
@@ -32,25 +34,49 @@ visualizer.save_all_plots(dataset_stats, feature_stats)
 ### 2. Command Line Usage
 
 ```bash
-# Run comprehensive analysis
+# Regular analysis (loads all data into memory)
 python batteryml/data_analysis/run_analysis.py --data_path data/processed/MATR --output_dir results
+
+# Streaming analysis (memory-efficient, processes one file at a time)
+python batteryml/data_analysis/run_analysis.py --data_path data/processed/MATR --output_dir results --streaming
 
 # Quick analysis without plots
 python batteryml/data_analysis/run_analysis.py --data_path data/processed/MATR --no_plots
 
-# Save detailed CSV files
+# Save detailed CSV files (regular analysis only)
 python batteryml/data_analysis/run_analysis.py --data_path data/processed/MATR --save_csv
 ```
 
 ### 3. Simple Script Usage
 
-```python
-# Use the simple analysis script
+```bash
+# Regular analysis
 python analyze_battery_data.py
+
+# Streaming analysis (memory-efficient)
+python analyze_battery_streaming.py
 
 # Or import and use directly
 from analyze_battery_data import analyze_dataset
 analyze_dataset("data/processed/MATR", "matr_analysis")
+```
+
+### 4. Streaming Analysis (Memory-Efficient)
+
+For large datasets or memory-constrained environments:
+
+```python
+from batteryml.data_analysis.streaming_analyzer import StreamingBatteryDataAnalyzer
+
+# Initialize streaming analyzer
+analyzer = StreamingBatteryDataAnalyzer("path/to/battery/data")
+
+# Run complete analysis (processes one file at a time)
+dataset_stats, feature_stats = analyzer.run_complete_analysis()
+
+# Results are identical to regular analysis
+print(f"Total batteries: {dataset_stats['total_batteries']}")
+print(f"Features analyzed: {len(feature_stats)}")
 ```
 
 ## Analysis Components
@@ -125,6 +151,32 @@ The analysis tools include robust error handling:
 - Comprehensive error messages and warnings
 - Fallback options for incomplete datasets
 
+## When to Use Streaming vs Regular Analysis
+
+### **Use Streaming Analysis When:**
+- ✅ Dataset has > 100 battery files
+- ✅ Individual files are large (> 10MB each)
+- ✅ Limited available RAM (< 8GB)
+- ✅ Processing on cloud instances with memory constraints
+- ✅ Want to monitor progress in real-time
+- ✅ Need to process datasets of any size
+
+### **Use Regular Analysis When:**
+- ✅ Dataset has < 50 battery files
+- ✅ Individual files are small (< 5MB each)
+- ✅ Plenty of available RAM (> 16GB)
+- ✅ Need fastest possible processing
+- ✅ Want to keep all data in memory for further analysis
+
+### **Performance Comparison:**
+| Aspect | Regular Analysis | Streaming Analysis |
+|--------|------------------|-------------------|
+| **Memory Usage** | Loads ALL data at once | Processes ONE file at a time |
+| **Speed** | Faster for small datasets | Slightly slower due to file I/O |
+| **Scalability** | Limited by available RAM | Scales to any dataset size |
+| **Progress Tracking** | Basic progress bars | Detailed progress for each step |
+| **Results** | Identical | Identical |
+
 ## Dependencies
 
 Additional dependencies required for analysis:
@@ -133,6 +185,7 @@ matplotlib>=3.5.0
 seaborn>=0.11.0
 pandas>=1.3.0
 numpy>=1.21.0
+tqdm>=4.60.0
 ```
 
 Install with:

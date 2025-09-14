@@ -25,6 +25,7 @@ import warnings
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from batteryml.data_analysis.analyzer import BatteryDataAnalyzer
+from batteryml.data_analysis.streaming_analyzer import StreamingBatteryDataAnalyzer
 from batteryml.data_analysis.visualization import BatteryDataVisualizer
 
 
@@ -75,6 +76,12 @@ Examples:
         help='Enable verbose output'
     )
     
+    parser.add_argument(
+        '--streaming', 
+        action='store_true',
+        help='Use streaming analysis (memory-efficient for large datasets)'
+    )
+    
     args = parser.parse_args()
     
     # Validate input path
@@ -103,28 +110,59 @@ Examples:
     try:
         # Initialize analyzer
         print("\n" + "="*60)
-        print("INITIALIZING BATTERY DATA ANALYZER")
+        if args.streaming:
+            print("INITIALIZING STREAMING BATTERY DATA ANALYZER")
+            print("(Memory-efficient processing - one file at a time)")
+        else:
+            print("INITIALIZING BATTERY DATA ANALYZER")
+            print("(Loading all data into memory)")
         print("="*60)
         
-        analyzer = BatteryDataAnalyzer(str(data_path))
-        
-        # Run dataset overview analysis
-        print("\nRunning dataset overview analysis...")
-        dataset_stats = analyzer.analyze_dataset_overview()
-        
-        # Run feature analysis
-        print("\nRunning feature analysis...")
-        feature_stats = analyzer.analyze_features()
-        
-        # Generate summary report
-        print("\nGenerating summary report...")
-        summary_report = analyzer.generate_summary_report()
-        print(summary_report)
+        if args.streaming:
+            analyzer = StreamingBatteryDataAnalyzer(str(data_path))
+            # Run complete analysis with streaming
+            dataset_stats, feature_stats = analyzer.run_complete_analysis()
+            
+            # Generate summary report
+            print("\nGenerating summary report...")
+            summary_report = f"""
+BATTERY DATA ANALYSIS SUMMARY
+============================
+Dataset: {analyzer.dataset_name}
+Total Batteries: {dataset_stats.get('total_batteries', 0)}
+Features Analyzed: {len(feature_stats)}
+
+Dataset Distribution:
+{chr(10).join([f"  {k}: {v} batteries" for k, v in dataset_stats.get('datasets', {}).items()])}
+
+Chemistry Distribution:
+{chr(10).join([f"  {k}: {v} batteries" for k, v in dataset_stats.get('chemistries', {}).items()])}
+
+Analysis completed using streaming approach (memory-efficient).
+"""
+            print(summary_report)
+        else:
+            analyzer = BatteryDataAnalyzer(str(data_path))
+            
+            # Run dataset overview analysis
+            print("\nRunning dataset overview analysis...")
+            dataset_stats = analyzer.analyze_dataset_overview()
+            
+            # Run feature analysis
+            print("\nRunning feature analysis...")
+            feature_stats = analyzer.analyze_features()
+            
+            # Generate summary report
+            print("\nGenerating summary report...")
+            summary_report = analyzer.generate_summary_report()
+            print(summary_report)
         
         # Save analysis results
-        if args.save_csv:
+        if args.save_csv and not args.streaming:
             print("\nSaving detailed CSV files...")
             analyzer.save_analysis(str(output_dir))
+        elif args.save_csv and args.streaming:
+            print("\nCSV saving not available for streaming analysis (use regular analysis for CSV output)")
         
         # Generate visualizations
         if not args.no_plots:

@@ -50,6 +50,123 @@ def load_battery_data(data_path: str) -> List[BatteryData]:
     return batteries
 
 
+def get_battery_files(data_path: str) -> List[Path]:
+    """
+    Get list of battery pickle files without loading them.
+
+    Args:
+        data_path: Path to directory containing .pkl files
+
+    Returns:
+        List of Path objects to .pkl files
+
+    Raises:
+        FileNotFoundError: If data_path doesn't exist
+        ValueError: If no .pkl files found
+    """
+    data_path = Path(data_path)
+    if not data_path.exists():
+        raise FileNotFoundError(f"Data path does not exist: {data_path}")
+    
+    battery_files = list(data_path.glob("*.pkl"))
+    if not battery_files:
+        raise ValueError(f"No .pkl files found in {data_path}")
+    
+    return battery_files
+
+
+def process_battery_file(file_path: Path) -> Optional[BatteryData]:
+    """
+    Process a single battery file and return the data.
+
+    Args:
+        file_path: Path to the .pkl file
+
+    Returns:
+        BatteryData object or None if loading failed
+    """
+    try:
+        with open(file_path, 'rb') as f:
+            battery = BatteryData.load(file_path)
+            return battery
+    except Exception as e:
+        warnings.warn(f"Failed to load {file_path}: {e}")
+        return None
+
+
+def get_dataset_stats_streaming(data_path: str) -> Dict[str, Any]:
+    """
+    Get basic statistics about a dataset by processing files one at a time.
+    This is memory-efficient for large datasets.
+
+    Args:
+        data_path: Path to directory containing .pkl files
+
+    Returns:
+        Dictionary containing dataset statistics
+    """
+    battery_files = get_battery_files(data_path)
+    
+    stats = {
+        'total_batteries': 0,
+        'datasets': {},
+        'chemistries': {},
+        'capacities': [],
+        'cycle_lives': [],
+        'voltages': [],
+        'temperatures': []
+    }
+    
+    print(f"Processing {len(battery_files)} battery files one at a time...")
+    
+    for file_path in tqdm(battery_files, desc="Processing battery files", unit="files"):
+        battery = process_battery_file(file_path)
+        if battery is None:
+            continue
+            
+        stats['total_batteries'] += 1
+        
+        # Extract dataset name from cell_id (assume format: DATASET_CELLID)
+        dataset_name = battery.cell_id.split('_')[0] if '_' in battery.cell_id else 'Unknown'
+        if dataset_name not in stats['datasets']:
+            stats['datasets'][dataset_name] = 0
+        stats['datasets'][dataset_name] += 1
+        
+        # Extract chemistry information
+        cathode = getattr(battery, 'cathode_material', 'Unknown')
+        if cathode not in stats['chemistries']:
+            stats['chemistries'][cathode] = 0
+        stats['chemistries'][cathode] += 1
+        
+        # Collect capacity information
+        if hasattr(battery, 'nominal_capacity_in_Ah') and battery.nominal_capacity_in_Ah:
+            stats['capacities'].append(battery.nominal_capacity_in_Ah)
+        
+        # Collect cycle life information
+        if battery.cycle_data:
+            stats['cycle_lives'].append(len(battery.cycle_data))
+        
+        # Collect voltage and temperature data from cycles (sample to avoid memory issues)
+        voltage_samples = []
+        temp_samples = []
+        for cycle in battery.cycle_data:
+            if cycle.voltage_in_V and len(voltage_samples) < 1000:  # Limit samples
+                voltage_samples.extend(cycle.voltage_in_V[:100])  # Take first 100 points
+            if cycle.temperature_in_C and len(temp_samples) < 1000:  # Limit samples
+                temp_samples.extend(cycle.temperature_in_C[:100])  # Take first 100 points
+        
+        stats['voltages'].extend(voltage_samples)
+        stats['temperatures'].extend(temp_samples)
+    
+    # Convert lists to numpy arrays for easier statistics
+    stats['capacities'] = np.array(stats['capacities']) if stats['capacities'] else np.array([])
+    stats['cycle_lives'] = np.array(stats['cycle_lives']) if stats['cycle_lives'] else np.array([])
+    stats['voltages'] = np.array(stats['voltages']) if stats['voltages'] else np.array([])
+    stats['temperatures'] = np.array(stats['temperatures']) if stats['temperatures'] else np.array([])
+    
+    return stats
+
+
 def get_dataset_stats(batteries: List[BatteryData]) -> Dict[str, Any]:
     """
     Get basic statistics about a dataset.
