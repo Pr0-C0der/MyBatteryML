@@ -38,7 +38,7 @@ DOWNLOAD_LINKS = {
         ('https://web.calce.umd.edu/batteries/data/CX2_34.zip', 'CX2_34.zip'),
         ('https://web.calce.umd.edu/batteries/data/CX2_36.zip', 'CX2_36.zip'),
         ('https://web.calce.umd.edu/batteries/data/CX2_37.zip', 'CX2_37.zip'),
-        ('https://web.calce.umd.edu/batteries/data/CX2_38.zip', 'CX2_38.zip'),
+        ('https://web.calce.umfulld.edu/batteries/data/CX2_38.zip', 'CX2_38.zip'),
     ],
     'RWTH': [
         ('https://publications.rwth-aachen.de/record/818642/files/Rawdata.zip',

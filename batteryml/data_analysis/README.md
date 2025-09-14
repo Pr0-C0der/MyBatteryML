@@ -1,239 +1,202 @@
-# BatteryML Data Analysis Module
+# Battery Data Analysis Module
 
-This module provides comprehensive data analysis tools for battery datasets, including individual battery analysis, dataset-level statistics, and visualization utilities.
+This module provides comprehensive data analysis tools for battery datasets processed by BatteryML. It generates visualizations and statistical summaries for each dataset.
 
 ## Features
 
 - **Individual Battery Analysis**: Analyze each battery pickle file separately to avoid memory issues
-- **Dataset-Level Statistics**: Comprehensive statistics across all batteries in a dataset
-- **Feature Analysis**: Extract and analyze all features with min, max, mean, median, std, quartiles
-- **Visualization**: Create comprehensive plots and reports
-- **Memory Efficient**: Process batteries one at a time to handle large datasets
-- **Error Handling**: Robust error handling to prevent runtime errors
+- **Comprehensive Visualizations**: Generate 5 types of plots for each battery
+- **Dataset-Specific Analysis**: Custom analysis for each dataset type (CALCE, HUST, MATR, SNL, etc.)
+- **Statistical Summaries**: Generate detailed statistics tables for each dataset
+- **Memory Efficient**: Processes batteries one at a time to handle large datasets
 
-## Quick Start
+## Generated Plots
 
-### 1. Analyze a Single Dataset
+For each battery, the following plots are generated:
 
-```bash
-# Analyze a specific dataset
-python batteryml/data_analysis/analyze_datasets.py \
-    --dataset_path data/processed/MATR \
-    --output_dir results/MATR_analysis
+1. **Capacity Fade Curves**: Discharge capacity vs cycle number
+2. **Voltage vs Capacity Curves**: Voltage profiles for selected cycles
+3. **Charge vs Discharge Capacity**: QC vs QD scatter plots
+4. **Current vs Time**: Current profiles for selected cycles
+5. **Voltage vs Time**: Voltage profiles for selected cycles
+
+## Output Structure
+
+```
+analysis_output/
+├── plots/
+│   ├── capacity_fade/          # Capacity fade plots
+│   ├── voltage_capacity/       # Voltage vs capacity plots
+│   ├── qc_qd/                  # Charge vs discharge capacity plots
+│   ├── current_time/           # Current vs time plots
+│   └── voltage_time/           # Voltage vs time plots
+├── dataset_summary.csv         # Overall dataset statistics
+└── {dataset}_summary.txt       # Dataset-specific summary
 ```
 
-### 2. Analyze All Datasets
+## Usage
+
+### Method 1: Simple Interface
+
+Run the simple analysis script from the project root:
 
 ```bash
-# Analyze all datasets in a directory
-python batteryml/data_analysis/analyze_datasets.py \
-    --all_datasets \
-    --data_root data/processed \
-    --output_dir results
+python analyze_datasets.py
 ```
 
-### 3. Quick Test (Limited Batteries)
+This will:
+1. Check for processed data in `data/processed/`
+2. Show available datasets
+3. Let you choose to analyze all datasets or a specific one
+
+### Method 2: Command Line Interface
+
+#### Analyze a specific dataset:
 
 ```bash
-# Analyze only first 10 batteries per dataset (for testing)
-python batteryml/data_analysis/analyze_datasets.py \
-    --all_datasets \
-    --data_root data/processed \
-    --output_dir results \
-    --max_batteries 10
+python -m batteryml.data_analysis.run_analysis --dataset CALCE --data_path data/processed/CALCE
 ```
 
-### 4. Fast Analysis (No Plots)
+#### Analyze all datasets:
 
 ```bash
-# Skip visualization for faster analysis
-python batteryml/data_analysis/analyze_datasets.py \
-    --all_datasets \
-    --data_root data/processed \
-    --output_dir results \
-    --no_plots
+python -m batteryml.data_analysis.run_analysis --all --data_path data/processed
 ```
 
-### 5. Generate Capacity vs Cycles Plot
+#### With custom output directory:
 
 ```bash
-# Generate capacity vs cycles plot for all batteries (merged graph)
-python batteryml/data_analysis/analyze_datasets.py \
-    --all_datasets \
-    --data_root data/processed \
-    --output_dir results \
-    --capacity_vs_cycles
-
-# Generate capacity vs cycles plot with limited batteries (for performance)
-python batteryml/data_analysis/analyze_datasets.py \
-    --all_datasets \
-    --data_root data/processed \
-    --output_dir results \
-    --capacity_vs_cycles \
-    --max_batteries_plot 50
-
-# Use standalone script for capacity vs cycles plotting only
-python batteryml/data_analysis/plot_capacity_vs_cycles.py \
-    --all_datasets \
-    --data_root data/processed \
-    --output_dir plots
+python -m batteryml.data_analysis.run_analysis --dataset MATR --data_path data/processed/MATR --output_dir my_analysis
 ```
 
-## Analysis Output
-
-The analysis generates:
-
-1. **Console Output**: 
-   - Total number of batteries per dataset
-   - Feature statistics (min, max, mean, median, std, etc.)
-   - Dataset summary statistics
-   - Chemistry distribution
-   - Cycle life analysis
-
-2. **Saved Files**:
-   - `{dataset_name}_summary.json`: Complete analysis results
-   - `{dataset_name}_features.csv`: Feature statistics table
-   - `{dataset_name}_overview.png`: Dataset overview plots
-   - `{dataset_name}_features.png`: Feature distribution plots
-   - `{dataset_name}_cycle_life.png`: Cycle life analysis plots
-   - `{dataset_name}_capacity.png`: Capacity analysis plots
-   - `{dataset_name}_capacity_vs_cycles.png`: **NEW** - Capacity vs cycles plot for all batteries (merged graph)
-
-## Programmatic Usage
+### Method 3: Programmatic Usage
 
 ```python
-from batteryml.data_analysis import DatasetAnalyzer, AnalysisVisualizer
+from batteryml.data_analysis import CALCEAnalyzer
 
-# Analyze a dataset
-analyzer = DatasetAnalyzer("data/processed/MATR")
-summary_stats = analyzer.analyze_dataset()
+# Create analyzer
+analyzer = CALCEAnalyzer("data/processed/CALCE", "calce_analysis")
 
-# Print results
-analyzer.print_dataset_summary()
-analyzer.print_feature_summary()
-
-# Get feature statistics table
-features_df = analyzer.get_feature_summary_table()
-print(features_df)
-
-# Create visualizations
-visualizer = AnalysisVisualizer()
-visualizer.create_comprehensive_report(analyzer, "output_dir")
-
-# Create capacity vs cycles plot specifically
-visualizer.plot_capacity_vs_cycles(
-    analyzer.analysis_results,
-    save_path="capacity_vs_cycles.png",
-    max_batteries_to_plot=100
-)
+# Run analysis
+analyzer.analyze_dataset()
 ```
 
-## Key Statistics Provided
+## Dataset-Specific Features
 
-### Dataset Level
-- Total number of batteries
-- Successfully analyzed batteries
-- Average cycle life across all batteries
-- Chemistry distribution
-- Capacity statistics
+### CALCE Dataset
+- Analyzes CS (1.1 Ah) vs CX (1.35 Ah) cell types
+- Voltage range analysis (2.7V - 4.2V)
+- Cycle life distribution
 
-### Feature Level
-For each feature found in the dataset:
-- **Count**: Number of non-null values
-- **Min**: Minimum value
-- **Max**: Maximum value
-- **Mean**: Average value
-- **Median**: Median value
-- **Std**: Standard deviation
-- **Q25**: 25th percentile
-- **Q75**: 75th percentile
+### HUST Dataset
+- Discharge rate group analysis (3-stage discharge protocols)
+- Temperature range analysis
+- Cell ID pattern analysis
 
-### Battery Level
-- Cell ID and basic metadata
-- Total cycles and cycle life
-- Capacity statistics (discharge, charge, retention)
-- Voltage, current, and temperature statistics
-- Degradation analysis
+### MATR Dataset
+- Batch distribution analysis (b1, b2, b3, b4)
+- Charge policy analysis
+- Internal resistance statistics
+- Qdlin feature analysis
 
-## Error Handling
+### SNL Dataset
+- Cathode material distribution (NMC, NCA, LFP)
+- Temperature group analysis (15°C, 25°C, 35°C)
+- SOC range analysis (0-100%, 20-80%, 40-60%)
+- Discharge rate analysis
 
-The analysis includes comprehensive error handling:
-- Safe loading of pickle files (continues if one fails)
-- NaN value handling in statistics
-- Memory-efficient processing
-- Progress indicators for long-running analyses
-- Detailed error messages
+### Other Datasets
+- HNEI: NMC_LCO cell analysis
+- RWTH: Cell ID analysis
+- UL_PUR: N15/N20 cell type analysis
+- OX: General cell analysis
 
 ## Requirements
 
-Install additional requirements for data analysis:
+Install the required packages:
 
 ```bash
 pip install -r batteryml/data_analysis/requirements.txt
 ```
 
+Required packages:
+- matplotlib >= 3.5.0
+- seaborn >= 0.11.0
+- pandas >= 1.3.0
+- numpy >= 1.21.0
+- tqdm >= 4.62.0
+
+## Output Files
+
+### Summary Tables (CSV)
+- `dataset_summary.csv`: Comprehensive statistics including:
+  - Total batteries
+  - Cycle counts (mean, min, max)
+  - Nominal capacity statistics
+  - Material composition
+  - Voltage ranges
+  - Capacity fade rates
+  - Cycle life statistics
+
+### Dataset-Specific Summaries (TXT)
+- `{dataset}_summary.txt`: Dataset-specific analysis including:
+  - Cell type distributions
+  - Protocol analysis
+  - Feature-specific statistics
+  - Temperature/voltage ranges
+
+### Plots (PNG)
+- High-resolution PNG files (300 DPI)
+- Individual plots for each battery
+- Organized in subdirectories by plot type
+- Safe filenames (special characters replaced)
+
+## Memory Management
+
+The analysis is designed to be memory-efficient:
+- Processes one battery at a time
+- Loads data only when needed
+- Closes plots immediately after saving
+- Handles large datasets without memory issues
+
+## Error Handling
+
+- Graceful handling of corrupted or invalid pickle files
+- Continues analysis even if some batteries fail
+- Detailed error messages for debugging
+- Progress tracking with tqdm
+
 ## Examples
 
-### Example 1: Basic Dataset Analysis
-
+### Quick Start
 ```bash
-python batteryml/data_analysis/analyze_datasets.py \
-    --dataset_path data/processed/MATR \
-    --output_dir results/MATR_analysis
+# Make sure you have processed data
+batteryml preprocess CALCE data/raw/CALCE data/processed/CALCE
+
+# Run analysis
+python analyze_datasets.py
 ```
 
-Output:
+### Advanced Usage
+```bash
+# Analyze specific dataset with custom output
+python -m batteryml.data_analysis.run_analysis \
+    --dataset MATR \
+    --data_path data/processed/MATR \
+    --output_dir detailed_matr_analysis
 ```
-================================================================================
-ANALYZING DATASET: MATR
-================================================================================
-Found 180 battery files
-Analyzing batteries: 100%|████████████| 180/180 [00:45<00:00,  3.98it/s]
-Successfully analyzed 180 batteries
-
-================================================================================
-DATASET ANALYSIS SUMMARY: MATR
-================================================================================
-Total Batteries: 180
-Successfully Analyzed: 180
-
---- DATASET STATISTICS ---
-Total Cycles: 148320
-Average Cycle Life: 823.45
-Median Cycle Life: 750.00
-Cycle Life Std: 368.12
-Min Cycle Life: 150.00
-Max Cycle Life: 2000.00
-Average Nominal Capacity: 1.1000 Ah
-
---- CHEMISTRY DISTRIBUTION ---
-LFP/graphite: 180 batteries
-
---- CYCLE LIFE DISTRIBUTION ---
-Mean: 823.45
-Median: 750.00
-Std: 368.12
-Min: 150.00
-Max: 2000.00
-Q25: 500.00
-Q75: 1100.00
-```
-
-### Example 2: Feature Analysis
-
-The analysis automatically extracts and analyzes all features found in the battery data, providing comprehensive statistics for each feature type.
 
 ## Troubleshooting
 
-1. **Memory Issues**: Use `--max_batteries` to limit the number of batteries analyzed
-2. **No Files Found**: Ensure the dataset path contains `.pkl` files
-3. **Import Errors**: Make sure you're running from the correct directory and have installed requirements
-4. **Plot Issues**: Use `--no_plots` if visualization libraries are not available
+1. **No data found**: Ensure you have processed data using `batteryml preprocess`
+2. **Memory issues**: The analysis is designed to be memory-efficient, but very large datasets might still cause issues
+3. **Plot generation errors**: Check that matplotlib backend is properly configured
+4. **Import errors**: Ensure you're running from the project root directory
 
 ## Contributing
 
-To add new analysis features:
-1. Extend the `BatteryAnalyzer` class for individual battery analysis
-2. Extend the `DatasetAnalyzer` class for dataset-level analysis
-3. Add new visualization methods to `AnalysisVisualizer`
-4. Update the main script to include new functionality
+To add analysis for a new dataset:
+1. Create a new analyzer class inheriting from `BaseDataAnalyzer`
+2. Implement dataset-specific features in `analyze_{dataset}_specific_features()`
+3. Add the analyzer to the `__init__.py` imports
+4. Update the `run_analysis.py` analyzer mapping
