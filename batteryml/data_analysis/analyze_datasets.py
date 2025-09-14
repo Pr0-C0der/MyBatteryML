@@ -35,7 +35,9 @@ warnings.filterwarnings('ignore')
 
 def analyze_single_dataset(dataset_path: str, output_dir: str, 
                           max_batteries: Optional[int] = None,
-                          create_plots: bool = True) -> bool:
+                          create_plots: bool = True,
+                          create_capacity_vs_cycles: bool = True,
+                          max_batteries_plot: int = 100) -> bool:
     """
     Analyze a single dataset.
     
@@ -85,6 +87,18 @@ def analyze_single_dataset(dataset_path: str, output_dir: str,
             visualizer = AnalysisVisualizer()
             visualizer.create_comprehensive_report(analyzer, output_path)
         
+        # Create capacity vs cycles plot if requested
+        if create_capacity_vs_cycles:
+            print("\nCreating capacity vs cycles plot...")
+            visualizer = AnalysisVisualizer()
+            plot_path = output_path / f"{analyzer.dataset_name}_capacity_vs_cycles.png"
+            visualizer.plot_capacity_vs_cycles(
+                analyzer.analysis_results,
+                save_path=str(plot_path),
+                max_batteries_to_plot=max_batteries_plot
+            )
+            print(f"Capacity vs cycles plot saved to: {plot_path}")
+        
         print(f"\nAnalysis completed successfully!")
         print(f"Results saved to: {output_path}")
         
@@ -97,7 +111,9 @@ def analyze_single_dataset(dataset_path: str, output_dir: str,
 
 def analyze_all_datasets(data_root: str, output_dir: str, 
                         max_batteries_per_dataset: Optional[int] = None,
-                        create_plots: bool = True) -> None:
+                        create_plots: bool = True,
+                        create_capacity_vs_cycles: bool = False,
+                        max_batteries_plot: int = 100) -> None:
     """
     Analyze all datasets in the data root directory.
     
@@ -142,7 +158,9 @@ def analyze_all_datasets(data_root: str, output_dir: str,
             str(dataset_dir), 
             str(dataset_output),
             max_batteries=max_batteries_per_dataset,
-            create_plots=create_plots
+            create_plots=create_plots,
+            create_capacity_vs_cycles=create_capacity_vs_cycles,
+            max_batteries_plot=max_batteries_plot
         )
         
         if success:
@@ -199,6 +217,10 @@ Examples:
                        help='Maximum number of batteries to analyze per dataset (None for all)')
     parser.add_argument('--no_plots', action='store_true',
                        help='Skip creating visualization plots (faster analysis)')
+    parser.add_argument('--capacity_vs_cycles', action='store_true',
+                       help='Generate capacity vs cycles plot for all batteries (merged graph)')
+    parser.add_argument('--max_batteries_plot', type=int, default=100,
+                       help='Maximum number of batteries to include in capacity vs cycles plot (default: 100)')
     
     args = parser.parse_args()
     
@@ -222,14 +244,18 @@ Examples:
             data_root=args.data_root,
             output_dir=args.output_dir,
             max_batteries_per_dataset=args.max_batteries,
-            create_plots=not args.no_plots
+            create_plots=not args.no_plots,
+            create_capacity_vs_cycles=args.capacity_vs_cycles,
+            max_batteries_plot=args.max_batteries_plot
         )
     else:
         success = analyze_single_dataset(
             dataset_path=args.dataset_path,
             output_dir=args.output_dir,
             max_batteries=args.max_batteries,
-            create_plots=not args.no_plots
+            create_plots=not args.no_plots,
+            create_capacity_vs_cycles=args.capacity_vs_cycles,
+            max_batteries_plot=args.max_batteries_plot
         )
         
         if not success:

@@ -54,6 +54,31 @@ python batteryml/data_analysis/analyze_datasets.py \
     --no_plots
 ```
 
+### 5. Generate Capacity vs Cycles Plot
+
+```bash
+# Generate capacity vs cycles plot for all batteries (merged graph)
+python batteryml/data_analysis/analyze_datasets.py \
+    --all_datasets \
+    --data_root data/processed \
+    --output_dir results \
+    --capacity_vs_cycles
+
+# Generate capacity vs cycles plot with limited batteries (for performance)
+python batteryml/data_analysis/analyze_datasets.py \
+    --all_datasets \
+    --data_root data/processed \
+    --output_dir results \
+    --capacity_vs_cycles \
+    --max_batteries_plot 50
+
+# Use standalone script for capacity vs cycles plotting only
+python batteryml/data_analysis/plot_capacity_vs_cycles.py \
+    --all_datasets \
+    --data_root data/processed \
+    --output_dir plots
+```
+
 ## Analysis Output
 
 The analysis generates:
@@ -72,6 +97,7 @@ The analysis generates:
    - `{dataset_name}_features.png`: Feature distribution plots
    - `{dataset_name}_cycle_life.png`: Cycle life analysis plots
    - `{dataset_name}_capacity.png`: Capacity analysis plots
+   - `{dataset_name}_capacity_vs_cycles.png`: **NEW** - Capacity vs cycles plot for all batteries (merged graph)
 
 ## Programmatic Usage
 
@@ -93,6 +119,13 @@ print(features_df)
 # Create visualizations
 visualizer = AnalysisVisualizer()
 visualizer.create_comprehensive_report(analyzer, "output_dir")
+
+# Create capacity vs cycles plot specifically
+visualizer.plot_capacity_vs_cycles(
+    analyzer.analysis_results,
+    save_path="capacity_vs_cycles.png",
+    max_batteries_to_plot=100
+)
 ```
 
 ## Key Statistics Provided

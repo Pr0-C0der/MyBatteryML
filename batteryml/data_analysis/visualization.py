@@ -345,6 +345,144 @@ class AnalysisVisualizer:
         
         plt.show()
     
+    def plot_capacity_vs_cycles(self, analysis_results: List[Dict[str, Any]], 
+                               save_path: Optional[str] = None,
+                               max_batteries_to_plot: int = 50):
+        """
+        Plot capacity vs cycles for all batteries in one merged graph.
+        
+        Args:
+            analysis_results: List of battery analysis results
+            save_path: Optional path to save the plot
+            max_batteries_to_plot: Maximum number of batteries to plot (for performance)
+        """
+        print("Creating capacity vs cycles plot...")
+        
+        # Load actual battery data for capacity vs cycles plotting
+        from batteryml.data_analysis.utils import AnalysisUtils
+        
+        # Limit number of batteries for performance
+        batteries_to_plot = min(len(analysis_results), max_batteries_to_plot)
+        
+        fig, ax = plt.subplots(1, 1, figsize=(15, 10))
+        
+        plotted_batteries = 0
+        colors = plt.cm.tab20(np.linspace(0, 1, 20))  # Use more colors for better distinction
+        
+        for i, analysis in enumerate(analysis_results[:batteries_to_plot]):
+            try:
+                file_path = analysis.get('file_path')
+                if not file_path:
+                    continue
+                
+                # Load the actual battery data
+                battery_data = AnalysisUtils.safe_load_battery(file_path)
+                if not battery_data or not battery_data.cycle_data:
+                    continue
+                
+                # Extract capacity vs cycles data
+                cycles = []
+                capacities = []
+                
+                for cycle in battery_data.cycle_data:
+                    if cycle.discharge_capacity_in_Ah:
+                        max_capacity = max(cycle.discharge_capacity_in_Ah)
+                        if not np.isnan(max_capacity):
+                            cycles.append(cycle.cycle_number)
+                            capacities.append(max_capacity)
+                
+                if len(cycles) > 1:  # Need at least 2 points to plot
+                    # Use different colors and alpha for better visibility
+                    color = colors[i % len(colors)]
+                    alpha = 0.6 if batteries_to_plot <= 20 else 0.3
+                    
+                    ax.plot(cycles, capacities, 
+                           color=color, alpha=alpha, linewidth=1.5,
+                           label=battery_data.cell_id if plotted_batteries < 10 else "")
+                    
+                    plotted_batteries += 1
+                    
+            except Exception as e:
+                print(f"Warning: Could not plot battery {i}: {str(e)}")
+                continue
+        
+        if plotted_batteries == 0:
+            print("No battery data available for capacity vs cycles plotting")
+            return
+        
+        # Customize the plot
+        ax.set_xlabel('Cycle Number', fontsize=12)
+        ax.set_ylabel('Discharge Capacity (Ah)', fontsize=12)
+        ax.set_title(f'Capacity vs Cycles - {plotted_batteries} Batteries', fontsize=14, fontweight='bold')
+        ax.grid(True, alpha=0.3)
+        
+        # Add legend only if we have few enough batteries
+        if plotted_batteries <= 10:
+            ax.legend(bbox_to_anchor=(1.05, 1), loc='upper left', fontsize=8)
+        else:
+            # Add text box with statistics
+            stats_text = f"Total Batteries: {plotted_batteries}\n"
+            stats_text += f"Max Cycles: {max([max(cycles) for cycles in [analysis.get('cycle_life_analysis', {}).get('cycle_life', 0) for analysis in analysis_results[:plotted_batteries]] if cycles > 0]) if plotted_batteries > 0 else 0}"
+            ax.text(0.02, 0.98, stats_text, transform=ax.transAxes, 
+                   verticalalignment='top', bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.8))
+        
+        # Add average trend line if we have enough data
+        if plotted_batteries > 5:
+            try:
+                # Calculate average capacity at each cycle number
+                all_cycles = set()
+                for analysis in analysis_results[:plotted_batteries]:
+                    file_path = analysis.get('file_path')
+                    if file_path:
+                        battery_data = AnalysisUtils.safe_load_battery(file_path)
+                        if battery_data and battery_data.cycle_data:
+                            for cycle in battery_data.cycle_data:
+                                if cycle.discharge_capacity_in_Ah:
+                                    all_cycles.add(cycle.cycle_number)
+                
+                if all_cycles:
+                    cycle_numbers = sorted(list(all_cycles))
+                    avg_capacities = []
+                    
+                    for cycle_num in cycle_numbers:
+                        capacities_at_cycle = []
+                        for analysis in analysis_results[:plotted_batteries]:
+                            file_path = analysis.get('file_path')
+                            if file_path:
+                                battery_data = AnalysisUtils.safe_load_battery(file_path)
+                                if battery_data and battery_data.cycle_data:
+                                    for cycle in battery_data.cycle_data:
+                                        if cycle.cycle_number == cycle_num and cycle.discharge_capacity_in_Ah:
+                                            max_cap = max(cycle.discharge_capacity_in_Ah)
+                                            if not np.isnan(max_cap):
+                                                capacities_at_cycle.append(max_cap)
+                        
+                        if capacities_at_cycle:
+                            avg_capacities.append(np.mean(capacities_at_cycle))
+                        else:
+                            avg_capacities.append(np.nan)
+                    
+                    # Plot average trend line
+                    valid_indices = ~np.isnan(avg_capacities)
+                    if np.any(valid_indices):
+                        ax.plot(np.array(cycle_numbers)[valid_indices], 
+                               np.array(avg_capacities)[valid_indices], 
+                               color='red', linewidth=3, alpha=0.8, 
+                               label='Average Trend', linestyle='--')
+                        
+            except Exception as e:
+                print(f"Warning: Could not calculate average trend: {str(e)}")
+        
+        plt.tight_layout()
+        
+        if save_path:
+            plt.savefig(save_path, dpi=300, bbox_inches='tight')
+            print(f"Capacity vs cycles plot saved to {save_path}")
+        
+        plt.show()
+        
+        print(f"Successfully plotted {plotted_batteries} batteries")
+    
     def create_comprehensive_report(self, dataset_analyzer, output_dir: str):
         """
         Create a comprehensive analysis report with all visualizations.
@@ -386,6 +524,13 @@ class AnalysisVisualizer:
             self.plot_capacity_analysis(
                 dataset_analyzer.analysis_results,
                 save_path=str(output_dir / f"{dataset_name}_capacity.png")
+            )
+            
+            # 5. Capacity vs Cycles (NEW - merged graph for all batteries)
+            self.plot_capacity_vs_cycles(
+                dataset_analyzer.analysis_results,
+                save_path=str(output_dir / f"{dataset_name}_capacity_vs_cycles.png"),
+                max_batteries_to_plot=100  # Adjust based on performance needs
             )
         
         print(f"Comprehensive report saved to {output_dir}")
