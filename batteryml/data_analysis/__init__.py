@@ -11,6 +11,8 @@ from .analyze_rwth import RWTHAnalyzer
 from .analyze_ul_pur import UL_PURAnalyzer
 from .analyze_ox import OXAnalyzer
 from .combined_plots import CombinedPlotGenerator
+from .cycle_plotter import CyclePlotter
+from .correlation_analyzer import CorrelationAnalyzer
 
 __all__ = [
     'BaseDataAnalyzer',
@@ -22,5 +24,7 @@ __all__ = [
     'RWTHAnalyzer',
     'UL_PURAnalyzer',
     'OXAnalyzer',
-    'CombinedPlotGenerator'
+    'CombinedPlotGenerator',
+    'CyclePlotter',
+    'CorrelationAnalyzer'
 ]

@@ -31,19 +31,12 @@ class BaseDataAnalyzer:
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
         
-        # Create subdirectories for different plot types
+        # Create subdirectory for capacity fade plots only
         self.plots_dir = self.output_dir / "plots"
         self.plots_dir.mkdir(exist_ok=True)
         
         self.capacity_fade_dir = self.plots_dir / "capacity_fade"
-        self.voltage_capacity_dir = self.plots_dir / "voltage_capacity"
-        self.qc_qd_dir = self.plots_dir / "qc_qd"
-        self.current_time_dir = self.plots_dir / "current_time"
-        self.voltage_time_dir = self.plots_dir / "voltage_time"
-        
-        for dir_path in [self.capacity_fade_dir, self.voltage_capacity_dir, 
-                        self.qc_qd_dir, self.current_time_dir, self.voltage_time_dir]:
-            dir_path.mkdir(exist_ok=True)
+        self.capacity_fade_dir.mkdir(exist_ok=True)
     
     def load_battery_data(self, file_path: Path) -> Optional[BatteryData]:
         """Load a single battery data file."""
@@ -97,156 +90,6 @@ class BaseDataAnalyzer:
         plt.savefig(save_path, dpi=300, bbox_inches='tight')
         plt.close()
     
-    def plot_voltage_capacity_curves(self, battery: BatteryData, save_path: Path, 
-                                   max_cycles: int = 10):
-        """Plot voltage vs capacity curves for selected cycles."""
-        plt.figure(figsize=(12, 8))
-        
-        # Select cycles to plot (every nth cycle)
-        total_cycles = len(battery.cycle_data)
-        if total_cycles > max_cycles:
-            step = total_cycles // max_cycles
-            selected_cycles = list(range(0, total_cycles, step))[:max_cycles]
-        else:
-            selected_cycles = list(range(total_cycles))
-        
-        colors = plt.cm.viridis(np.linspace(0, 1, len(selected_cycles)))
-        
-        for i, cycle_idx in enumerate(selected_cycles):
-            cycle_data = battery.cycle_data[cycle_idx]
-            if (cycle_data.voltage_in_V and cycle_data.discharge_capacity_in_Ah and 
-                len(cycle_data.voltage_in_V) > 0 and len(cycle_data.discharge_capacity_in_Ah) > 0):
-                
-                # Convert to numpy arrays for easier handling
-                voltage = np.array(cycle_data.voltage_in_V)
-                capacity = np.array(cycle_data.discharge_capacity_in_Ah)
-                
-                # Filter out invalid data points
-                valid_mask = (voltage > 0) & (capacity > 0) & (~np.isnan(voltage)) & (~np.isnan(capacity))
-                if np.any(valid_mask):
-                    plt.plot(capacity[valid_mask], voltage[valid_mask], 
-                            color=colors[i], linewidth=1.5, 
-                            label=f'Cycle {cycle_data.cycle_number}')
-        
-        plt.xlabel('Discharge Capacity (Ah)')
-        plt.ylabel('Voltage (V)')
-        plt.title(f'Voltage vs Capacity Curves - {battery.cell_id}')
-        plt.grid(True, alpha=0.3)
-        plt.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
-        plt.tight_layout()
-        plt.savefig(save_path, dpi=300, bbox_inches='tight')
-        plt.close()
-    
-    def plot_qc_vs_qd(self, battery: BatteryData, save_path: Path):
-        """Plot charge capacity vs discharge capacity."""
-        qc_values = []
-        qd_values = []
-        
-        for cycle_data in battery.cycle_data:
-            if (cycle_data.charge_capacity_in_Ah and cycle_data.discharge_capacity_in_Ah and
-                len(cycle_data.charge_capacity_in_Ah) > 0 and len(cycle_data.discharge_capacity_in_Ah) > 0):
-                
-                max_qc = max(cycle_data.charge_capacity_in_Ah)
-                max_qd = max(cycle_data.discharge_capacity_in_Ah)
-                
-                if max_qc > 0 and max_qd > 0:
-                    qc_values.append(max_qc)
-                    qd_values.append(max_qd)
-        
-        if not qc_values:
-            print(f"No valid QC/QD data for {battery.cell_id}")
-            return
-        
-        plt.figure(figsize=(10, 8))
-        plt.scatter(qc_values, qd_values, alpha=0.6, s=20)
-        plt.plot([0, max(max(qc_values), max(qd_values))], 
-                [0, max(max(qc_values), max(qd_values))], 
-                'r--', alpha=0.7, label='y=x line')
-        
-        plt.xlabel('Charge Capacity (Ah)')
-        plt.ylabel('Discharge Capacity (Ah)')
-        plt.title(f'Charge vs Discharge Capacity - {battery.cell_id}')
-        plt.grid(True, alpha=0.3)
-        plt.legend()
-        plt.tight_layout()
-        plt.savefig(save_path, dpi=300, bbox_inches='tight')
-        plt.close()
-    
-    def plot_current_time(self, battery: BatteryData, save_path: Path, max_cycles: int = 5):
-        """Plot current vs time for selected cycles."""
-        plt.figure(figsize=(12, 8))
-        
-        # Select cycles to plot
-        total_cycles = len(battery.cycle_data)
-        if total_cycles > max_cycles:
-            step = total_cycles // max_cycles
-            selected_cycles = list(range(0, total_cycles, step))[:max_cycles]
-        else:
-            selected_cycles = list(range(total_cycles))
-        
-        colors = plt.cm.tab10(np.linspace(0, 1, len(selected_cycles)))
-        
-        for i, cycle_idx in enumerate(selected_cycles):
-            cycle_data = battery.cycle_data[cycle_idx]
-            if (cycle_data.current_in_A and cycle_data.time_in_s and 
-                len(cycle_data.current_in_A) > 0 and len(cycle_data.time_in_s) > 0):
-                
-                current = np.array(cycle_data.current_in_A)
-                time = np.array(cycle_data.time_in_s)
-                
-                # Filter out invalid data
-                valid_mask = (~np.isnan(current)) & (~np.isnan(time))
-                if np.any(valid_mask):
-                    plt.plot(time[valid_mask], current[valid_mask], 
-                            color=colors[i], linewidth=1.5, 
-                            label=f'Cycle {cycle_data.cycle_number}')
-        
-        plt.xlabel('Time (s)')
-        plt.ylabel('Current (A)')
-        plt.title(f'Current vs Time - {battery.cell_id}')
-        plt.grid(True, alpha=0.3)
-        plt.legend()
-        plt.tight_layout()
-        plt.savefig(save_path, dpi=300, bbox_inches='tight')
-        plt.close()
-    
-    def plot_voltage_time(self, battery: BatteryData, save_path: Path, max_cycles: int = 5):
-        """Plot voltage vs time for selected cycles."""
-        plt.figure(figsize=(12, 8))
-        
-        # Select cycles to plot
-        total_cycles = len(battery.cycle_data)
-        if total_cycles > max_cycles:
-            step = total_cycles // max_cycles
-            selected_cycles = list(range(0, total_cycles, step))[:max_cycles]
-        else:
-            selected_cycles = list(range(total_cycles))
-        
-        colors = plt.cm.tab10(np.linspace(0, 1, len(selected_cycles)))
-        
-        for i, cycle_idx in enumerate(selected_cycles):
-            cycle_data = battery.cycle_data[cycle_idx]
-            if (cycle_data.voltage_in_V and cycle_data.time_in_s and 
-                len(cycle_data.voltage_in_V) > 0 and len(cycle_data.time_in_s) > 0):
-                
-                voltage = np.array(cycle_data.voltage_in_V)
-                time = np.array(cycle_data.time_in_s)
-                
-                # Filter out invalid data
-                valid_mask = (~np.isnan(voltage)) & (~np.isnan(time))
-                if np.any(valid_mask):
-                    plt.plot(time[valid_mask], voltage[valid_mask], 
-                            color=colors[i], linewidth=1.5, 
-                            label=f'Cycle {cycle_data.cycle_number}')
-        
-        plt.xlabel('Time (s)')
-        plt.ylabel('Voltage (V)')
-        plt.title(f'Voltage vs Time - {battery.cell_id}')
-        plt.grid(True, alpha=0.3)
-        plt.legend()
-        plt.tight_layout()
-        plt.savefig(save_path, dpi=300, bbox_inches='tight')
-        plt.close()
     
     
     def create_summary_table(self, stats: Dict[str, Any]) -> pd.DataFrame:
@@ -347,10 +190,6 @@ class BaseDataAnalyzer:
         print(f"Analysis complete! Results saved to {self.output_dir}")
         print(f"Individual plots saved in subdirectories:")
         print(f"  - Capacity fade: {self.capacity_fade_dir}")
-        print(f"  - Voltage vs Capacity: {self.voltage_capacity_dir}")
-        print(f"  - QC vs QD: {self.qc_qd_dir}")
-        print(f"  - Current vs Time: {self.current_time_dir}")
-        print(f"  - Voltage vs Time: {self.voltage_time_dir}")
         print(f"Combined plots saved in: {self.output_dir}/combined_plots/")
     
     def _collect_statistics_incrementally(self, battery_files):
@@ -412,29 +251,13 @@ class BaseDataAnalyzer:
         return stats
     
     def _analyze_single_battery(self, battery):
-        """Analyze a single battery and generate all plots."""
+        """Analyze a single battery and generate capacity fade plot only."""
         cell_id = battery.cell_id.replace('/', '_').replace('\\', '_')  # Safe filename
         
         try:
-            # Capacity fade plot
+            # Capacity fade plot only
             self.plot_capacity_fade(battery, 
                                   self.capacity_fade_dir / f"{cell_id}_capacity_fade.png")
-            
-            # Voltage vs capacity plot
-            self.plot_voltage_capacity_curves(battery, 
-                                            self.voltage_capacity_dir / f"{cell_id}_voltage_capacity.png")
-            
-            # QC vs QD plot
-            self.plot_qc_vs_qd(battery, 
-                             self.qc_qd_dir / f"{cell_id}_qc_qd.png")
-            
-            # Current vs time plot
-            self.plot_current_time(battery, 
-                                 self.current_time_dir / f"{cell_id}_current_time.png")
-            
-            # Voltage vs time plot
-            self.plot_voltage_time(battery, 
-                                 self.voltage_time_dir / f"{cell_id}_voltage_time.png")
             
         except Exception as e:
             print(f"Error analyzing battery {battery.cell_id}: {e}")
