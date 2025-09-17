@@ -1,40 +1,11 @@
-#!/usr/bin/env bash
-set -euo pipefail
-
-# Usage:
-#   ./run_all_data_analysis.sh [BASE_DATA_PATH] [OUTPUT_DIR]
-# Defaults:
-#   BASE_DATA_PATH = data/processed
-#   OUTPUT_DIR     = data_analysis_results
-
-BASE_DATA_PATH="${1:-data/processed}"
-OUTPUT_DIR="${2:-data_analysis_results}"
-
-# Prefer python3 if available
-PYTHON_BIN="python"
-if command -v python3 >/dev/null 2>&1; then
-  PYTHON_BIN="python3"
-fi
-
-echo "[1/4] Running per-dataset analyses into $OUTPUT_DIR ..."
-"$PYTHON_BIN" batteryml/data_analysis/run_analysis.py --all --data_path "$BASE_DATA_PATH" --output_dir "$OUTPUT_DIR"
-
-echo "[2/4] Generating combined plots per dataset ..."
-DATASETS=(CALCE HUST MATR SNL HNEI RWTH UL_PUR OX)
-for ds in "${DATASETS[@]}"; do
-  if [ -d "$BASE_DATA_PATH/$ds" ]; then
-    echo "  - $ds"
-    "$PYTHON_BIN" batteryml/data_analysis/run_analysis.py --combined-plots "$ds" --data_path "$BASE_DATA_PATH/$ds" --output_dir "$OUTPUT_DIR/$ds"
-  else
-    echo "  - Skipping $ds (no data at $BASE_DATA_PATH/$ds)"
-  fi
-done
-
-echo "[3/4] Running correlation analysis for all datasets ..."
-"$PYTHON_BIN" batteryml/data_analysis/run_correlation_analysis.py --all --data_path "$BASE_DATA_PATH" --output_dir "$OUTPUT_DIR"
-
-echo "[4/4] Generating cycle plots for all datasets ..."
-"$PYTHON_BIN" batteryml/data_analysis/run_cycle_plots.py --all --data_path "$BASE_DATA_PATH" --output_dir "$OUTPUT_DIR"
-
-echo "\nAll analyses complete. Results saved under: $OUTPUT_DIR"
-
+python batteryml/data_analysis/run_analysis.py --all --data_path data/processed --output_dir data_analysis_results
+python batteryml/data_analysis/run_analysis.py --combined-plots CALCE --data_path data/processed/CALCE --output_dir data_analysis_results/CALCE
+python batteryml/data_analysis/run_analysis.py --combined-plots HUST --data_path data/processed/HUST --output_dir data_analysis_results/HUST
+python batteryml/data_analysis/run_analysis.py --combined-plots MATR --data_path data/processed/MATR --output_dir data_analysis_results/MATR
+python batteryml/data_analysis/run_analysis.py --combined-plots SNL --data_path data/processed/SNL --output_dir data_analysis_results/SNL
+python batteryml/data_analysis/run_analysis.py --combined-plots HNEI --data_path data/processed/HNEI --output_dir data_analysis_results/HNEI
+python batteryml/data_analysis/run_analysis.py --combined-plots RWTH --data_path data/processed/RWTH --output_dir data_analysis_results/RWTH
+python batteryml/data_analysis/run_analysis.py --combined-plots UL_PUR --data_path data/processed/UL_PUR --output_dir data_analysis_results/UL_PUR
+python batteryml/data_analysis/run_analysis.py --combined-plots OX --data_path data/processed/OX --output_dir data_analysis_results/OX
+python batteryml/data_analysis/run_correlation_analysis.py --all --data_path data/processed --output_dir data_analysis_results
+python batteryml/data_analysis/run_cycle_plots.py --all --data_path data/processed --output_dir data_analysis_results
