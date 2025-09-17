@@ -93,8 +93,18 @@ class CorrelationAnalyzer:
         for attr, feature_name in feature_mapping.items():
             if hasattr(first_cycle, attr):
                 attr_value = getattr(first_cycle, attr)
-                if attr_value is not None and len(attr_value) > 0:
+                if attr_value is None:
+                    continue
+                # Consider scalars as available; for sequences require non-empty
+                if np.isscalar(attr_value):
                     available_features.append(feature_name)
+                else:
+                    try:
+                        if len(attr_value) > 0:
+                            available_features.append(feature_name)
+                    except TypeError:
+                        # Fallback: treat as available if not None
+                        available_features.append(feature_name)
         
         return available_features
     
@@ -142,16 +152,24 @@ class CorrelationAnalyzer:
                     attr_name = feature_mapping[feature_name]
                     if hasattr(cycle_data, attr_name):
                         feature_data = getattr(cycle_data, attr_name)
-                        if feature_data is not None and len(feature_data) > 0:
-                            # Convert to numpy array and filter valid data
-                            feature_array = np.array(feature_data)
-                            valid_data = feature_array[~np.isnan(feature_array)]
-                            if len(valid_data) > 0:
-                                row_data[feature_name] = np.mean(valid_data)
-                            else:
-                                row_data[feature_name] = np.nan
-                        else:
+                        if feature_data is None:
                             row_data[feature_name] = np.nan
+                        else:
+                            if np.isscalar(feature_data):
+                                # Single numeric value for the cycle
+                                try:
+                                    val = float(feature_data)
+                                    row_data[feature_name] = val if not np.isnan(val) else np.nan
+                                except Exception:
+                                    row_data[feature_name] = np.nan
+                            else:
+                                try:
+                                    # Convert to numpy array and filter valid data
+                                    feature_array = np.array(feature_data)
+                                    valid_data = feature_array[~np.isnan(feature_array)]
+                                    row_data[feature_name] = np.mean(valid_data) if valid_data.size > 0 else np.nan
+                                except Exception:
+                                    row_data[feature_name] = np.nan
                     else:
                         row_data[feature_name] = np.nan
                 else:

@@ -89,8 +89,17 @@ class CyclePlotter:
         for attr, feature_name in feature_mapping.items():
             if hasattr(first_cycle, attr):
                 attr_value = getattr(first_cycle, attr)
-                if attr_value is not None and len(attr_value) > 0:
+                if attr_value is None:
+                    continue
+                # Consider scalars as available; for sequences require non-empty
+                if isinstance(attr_value, (int, float)):
                     available_features.append(feature_name)
+                else:
+                    try:
+                        if len(attr_value) > 0:
+                            available_features.append(feature_name)
+                    except TypeError:
+                        available_features.append(feature_name)
         
         # Always include basic features if they exist
         basic_features = ['voltage', 'current', 'capacity', 'temperature']
@@ -153,23 +162,25 @@ class CyclePlotter:
                 cycle_data = battery.cycle_data[cycle_idx]
                 if hasattr(cycle_data, attr_name):
                     feature_data = getattr(cycle_data, attr_name)
-                    if (feature_data and cycle_data.time_in_s and 
-                        len(feature_data) > 0 and len(cycle_data.time_in_s) > 0):
-                        
-                        feature_values = np.array(feature_data)
-                        time = np.array(cycle_data.time_in_s)
-                        
-                        # Filter valid data
-                        valid_mask = (~np.isnan(feature_values)) & (~np.isnan(time))
-                        if attr_name in ['voltage_in_V', 'discharge_capacity_in_Ah', 'charge_capacity_in_Ah']:
-                            valid_mask = valid_mask & (feature_values > 0)
-                        
-                        if np.any(valid_mask):
-                            # Convert to relative time (start from 0)
-                            relative_time = time[valid_mask] - time[valid_mask][0]
-                            plt.plot(relative_time, feature_values[valid_mask], 
-                                    color=colors[i], linewidth=1.5, alpha=0.8,
-                                    label=f'Cycle {cycle_data.cycle_number}')
+                    time_data = cycle_data.time_in_s
+                    # Only plot if both series data exist and are non-empty arrays
+                    if feature_data is not None and time_data is not None:
+                        try:
+                            feature_values = np.array(feature_data)
+                            time = np.array(time_data)
+                            if feature_values.size > 0 and time.size > 0:
+                                # Filter valid data
+                                valid_mask = (~np.isnan(feature_values)) & (~np.isnan(time))
+                                if attr_name in ['voltage_in_V', 'discharge_capacity_in_Ah', 'charge_capacity_in_Ah']:
+                                    valid_mask = valid_mask & (feature_values > 0)
+                                if np.any(valid_mask):
+                                    relative_time = time[valid_mask] - time[valid_mask][0]
+                                    plt.plot(relative_time, feature_values[valid_mask],
+                                             color=colors[i], linewidth=1.5, alpha=0.8,
+                                             label=f'Cycle {cycle_data.cycle_number}')
+                        except Exception:
+                            # Skip plotting this cycle/feature on conversion issues
+                            pass
         
         plt.xlabel('Relative Time (s)', fontsize=12)
         plt.ylabel(ylabel, fontsize=12)
