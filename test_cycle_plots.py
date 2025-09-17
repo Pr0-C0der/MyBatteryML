@@ -17,7 +17,7 @@ def test_cycle_plotting():
     
     # Test with CALCE dataset
     data_path = "data/processed/CALCE"
-    output_dir = "test_cycle_plots"
+    output_dir = "data_analysis_results/CALCE"
     cycle_gap = 50  # Plot every 50th cycle
     
     print("Testing cycle plotting functionality...")

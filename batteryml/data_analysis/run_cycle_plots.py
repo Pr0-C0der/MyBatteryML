@@ -36,7 +36,7 @@ def run_cycle_plots(dataset_name: str, data_path: str, output_dir: str = None, c
     
     # Set default output directory if not provided
     if output_dir is None:
-        output_dir = f"{dataset_name.lower()}_cycle_plots"
+        output_dir = f"data_analysis_results/{dataset_name}"
     
     print(f"Starting cycle plotting for {dataset_name} dataset...")
     print(f"Data path: {data_path}")
@@ -61,7 +61,7 @@ def run_cycle_plots(dataset_name: str, data_path: str, output_dir: str = None, c
         return False
 
 
-def run_all_cycle_plots(base_data_path: str, base_output_dir: str = "all_cycle_plots", cycle_gap: int = 100):
+def run_all_cycle_plots(base_data_path: str, base_output_dir: str = "data_analysis_results", cycle_gap: int = 100):
     """
     Run cycle plotting for all available datasets.
     
@@ -85,7 +85,7 @@ def run_all_cycle_plots(base_data_path: str, base_output_dir: str = "all_cycle_p
     
     for dataset in datasets:
         dataset_path = base_path / dataset
-        output_path = base_output / f"{dataset.lower()}_cycle_plots"
+        output_path = base_output / dataset
         
         if dataset_path.exists():
             print(f"\n{'='*20} {dataset} {'='*20}")
@@ -161,7 +161,7 @@ Examples:
     
     # Run cycle plotting
     if args.all:
-        results = run_all_cycle_plots(str(data_path), args.output_dir or "all_cycle_plots", args.cycle_gap)
+        results = run_all_cycle_plots(str(data_path), args.output_dir or "data_analysis_results", args.cycle_gap)
         
         # Exit with error code if any plotting failed
         if not all(results.values()):

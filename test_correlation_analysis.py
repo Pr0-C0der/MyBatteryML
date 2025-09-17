@@ -17,7 +17,7 @@ def test_correlation_analysis():
     
     # Test with CALCE dataset
     data_path = "data/processed/CALCE"
-    output_dir = "test_correlation_analysis"
+    output_dir = "data_analysis_results/CALCE"
     
     print("Testing correlation analysis functionality...")
     print(f"Data path: {data_path}")

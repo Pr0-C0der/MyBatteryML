@@ -27,7 +27,7 @@ def test_combined_plots():
     
     try:
         # Create analyzer
-        analyzer = BaseDataAnalyzer(str(data_dir), "test_combined_output")
+        analyzer = BaseDataAnalyzer(str(data_dir), "data_analysis_results/MATR")
         
         # Get battery files
         battery_files = analyzer.get_battery_files()
@@ -38,7 +38,7 @@ def test_combined_plots():
         print(f"Found {len(battery_files)} battery files")
         
         # Create combined plot generator
-        plot_generator = CombinedPlotGenerator(Path("test_combined_output"), num_batteries=5)
+        plot_generator = CombinedPlotGenerator(Path("data_analysis_results/MATR"), num_batteries=5)
         
         # Test with first 5 batteries
         test_files = battery_files[:5]
@@ -48,7 +48,7 @@ def test_combined_plots():
         plot_generator.generate_combined_plots(test_files, analyzer)
         
         print("✓ Combined plots generated successfully!")
-        print(f"Check results in: test_combined_output/combined_plots/")
+        print(f"Check results in: data_analysis_results/MATR/combined_plots/")
         
         return True
         

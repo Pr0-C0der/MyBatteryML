@@ -18,7 +18,7 @@ def test_base_analyzer():
     print("Testing BaseDataAnalyzer...")
     
     # Create a test analyzer
-    analyzer = BaseDataAnalyzer("data/processed/MATR", "test_analysis")
+    analyzer = BaseDataAnalyzer("data/processed/MATR", "data_analysis_results/MATR")
     
     # Test directory creation
     assert analyzer.output_dir.exists(), "Output directory not created"

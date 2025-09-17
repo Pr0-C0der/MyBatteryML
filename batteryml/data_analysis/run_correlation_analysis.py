@@ -35,7 +35,7 @@ def run_correlation_analysis(dataset_name: str, data_path: str, output_dir: str 
     
     # Set default output directory if not provided
     if output_dir is None:
-        output_dir = f"{dataset_name.lower()}_correlation_analysis"
+        output_dir = f"data_analysis_results/{dataset_name}"
     
     print(f"Starting correlation analysis for {dataset_name} dataset...")
     print(f"Data path: {data_path}")
@@ -59,7 +59,7 @@ def run_correlation_analysis(dataset_name: str, data_path: str, output_dir: str 
         return False
 
 
-def run_all_correlation_analysis(base_data_path: str, base_output_dir: str = "all_correlation_analysis"):
+def run_all_correlation_analysis(base_data_path: str, base_output_dir: str = "data_analysis_results"):
     """
     Run correlation analysis for all available datasets.
     
@@ -81,7 +81,7 @@ def run_all_correlation_analysis(base_data_path: str, base_output_dir: str = "al
     
     for dataset in datasets:
         dataset_path = base_path / dataset
-        output_path = base_output / f"{dataset.lower()}_correlation_analysis"
+        output_path = base_output / dataset
         
         if dataset_path.exists():
             print(f"\n{'='*20} {dataset} {'='*20}")
@@ -155,7 +155,7 @@ Examples:
     
     # Run correlation analysis
     if args.all:
-        results = run_all_correlation_analysis(str(data_path), args.output_dir or "all_correlation_analysis")
+        results = run_all_correlation_analysis(str(data_path), args.output_dir or "data_analysis_results")
         
         # Exit with error code if any analysis failed
         if not all(results.values()):

@@ -47,7 +47,7 @@ def run_analysis(dataset_name: str, data_path: str, output_dir: str = None):
     
     # Set default output directory if not provided
     if output_dir is None:
-        output_dir = f"{dataset_name.lower()}_analysis"
+        output_dir = f"data_analysis_results/{dataset_name}"
     
     print(f"Starting analysis for {dataset_name} dataset...")
     print(f"Data path: {data_path}")
@@ -82,7 +82,7 @@ def run_combined_plots(dataset_name: str, data_path: str, output_dir: str = None
         output_dir: Output directory for results (optional)
     """
     if output_dir is None:
-        output_dir = f"{dataset_name.lower()}_combined_plots"
+        output_dir = f"data_analysis_results/{dataset_name}"
     
     print(f"Generating combined plots for {dataset_name} dataset...")
     print(f"Data path: {data_path}")
@@ -118,7 +118,7 @@ def run_combined_plots(dataset_name: str, data_path: str, output_dir: str = None
         return False
 
 
-def run_all_analyses(base_data_path: str, base_output_dir: str = "all_analysis"):
+def run_all_analyses(base_data_path: str, base_output_dir: str = "data_analysis_results"):
     """
     Run analysis for all available datasets.
     
@@ -140,7 +140,7 @@ def run_all_analyses(base_data_path: str, base_output_dir: str = "all_analysis")
     
     for dataset in datasets:
         dataset_path = base_path / dataset
-        output_path = base_output / f"{dataset.lower()}_analysis"
+        output_path = base_output / dataset
         
         if dataset_path.exists():
             print(f"\n{'='*20} {dataset} {'='*20}")
@@ -220,7 +220,7 @@ Examples:
     
     # Run analysis
     if args.all:
-        results = run_all_analyses(str(data_path), args.output_dir or "all_analysis")
+        results = run_all_analyses(str(data_path), args.output_dir or "data_analysis_results")
         
         # Exit with error code if any analysis failed
         if not all(results.values()):
