@@ -197,6 +197,88 @@ class CyclePlotter:
         plt.tight_layout()
         plt.savefig(save_path, dpi=300, bbox_inches='tight')
         plt.close()
+
+    def _is_scalar_feature(self, battery: BatteryData, feature_name: str) -> bool:
+        """Heuristically determine if a feature is scalar per cycle (no time dimension)."""
+        feature_mapping = {
+            'voltage': 'voltage_in_V',
+            'current': 'current_in_A',
+            'capacity': 'discharge_capacity_in_Ah',
+            'charge_capacity': 'charge_capacity_in_Ah',
+            'temperature': 'temperature_in_C',
+            'internal_resistance': 'internal_resistance_in_ohm',
+            'energy_charge': 'energy_charge',
+            'energy_discharge': 'energy_discharge',
+            'qdlin': 'Qdlin',
+            'tdlin': 'Tdlin'
+        }
+        attr_name = feature_mapping.get(feature_name)
+        if attr_name is None:
+            return False
+        for cycle_data in battery.cycle_data:
+            if hasattr(cycle_data, attr_name):
+                val = getattr(cycle_data, attr_name)
+                if val is None:
+                    continue
+                # numpy scalar or python number indicates scalar feature
+                if np.isscalar(val):
+                    return True
+                # If it's a sequence-like, it's not scalar
+                try:
+                    _ = len(val)
+                    return False
+                except TypeError:
+                    return True
+        return False
+
+    def plot_feature_vs_cycle(self, battery: BatteryData, feature_name: str, save_path: Path):
+        """Plot scalar feature values against cycle number."""
+        feature_mapping = {
+            'voltage': 'voltage_in_V',
+            'current': 'current_in_A',
+            'capacity': 'discharge_capacity_in_Ah',
+            'charge_capacity': 'charge_capacity_in_Ah',
+            'temperature': 'temperature_in_C',
+            'internal_resistance': 'internal_resistance_in_ohm',
+            'energy_charge': 'energy_charge',
+            'energy_discharge': 'energy_discharge',
+            'qdlin': 'Qdlin',
+            'tdlin': 'Tdlin'
+        }
+        attr_name = feature_mapping.get(feature_name)
+        if attr_name is None:
+            return
+
+        xs, ys = [], []
+        for c in battery.cycle_data:
+            if hasattr(c, attr_name):
+                val = getattr(c, attr_name)
+                if val is None:
+                    continue
+                try:
+                    if np.isscalar(val):
+                        f = float(val)
+                        if not np.isnan(f):
+                            xs.append(c.cycle_number)
+                            ys.append(f)
+                except Exception:
+                    continue
+
+        if len(xs) == 0:
+            return
+
+        plt.figure(figsize=(10, 6))
+        order = np.argsort(np.array(xs))
+        xs_sorted = np.array(xs)[order]
+        ys_sorted = np.array(ys)[order]
+        plt.plot(xs_sorted, ys_sorted, marker='o', linewidth=1.5, alpha=0.9)
+        plt.xlabel('Cycle Number', fontsize=12)
+        plt.ylabel(feature_name.replace('_', ' ').title(), fontsize=12)
+        plt.title(f'{feature_name.title()} vs Cycle Number - {battery.cell_id}', fontsize=14)
+        plt.grid(True, alpha=0.3)
+        plt.tight_layout()
+        plt.savefig(save_path, dpi=300, bbox_inches='tight')
+        plt.close()
     
     
     def plot_battery_features(self, battery: BatteryData):
@@ -206,9 +288,16 @@ class CyclePlotter:
         try:
             # Plot all detected features
             for feature in self.features:
-                feature_dir = self.output_dir / f"{feature}_vs_time"
-                save_path = feature_dir / f"{cell_id}_{feature}_time.png"
-                self.plot_feature_vs_time(battery, feature, save_path)
+                if self._is_scalar_feature(battery, feature):
+                    feature_dir = self.output_dir / f"{feature}_vs_cycle"
+                    feature_dir.mkdir(exist_ok=True)
+                    save_path = feature_dir / f"{cell_id}_{feature}_cycle.png"
+                    self.plot_feature_vs_cycle(battery, feature, save_path)
+                else:
+                    feature_dir = self.output_dir / f"{feature}_vs_time"
+                    feature_dir.mkdir(exist_ok=True)
+                    save_path = feature_dir / f"{cell_id}_{feature}_time.png"
+                    self.plot_feature_vs_time(battery, feature, save_path)
             
         except Exception as e:
             print(f"Error plotting features for battery {battery.cell_id}: {e}")
