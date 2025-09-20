@@ -3,11 +3,11 @@ model:
 train_test_split:
     name: 'CRUSHTrainTestSplitter'
     cell_data_path:
-        - 'data/processed/CALCE'
-        - 'data/processed/RWTH'
-        - 'data/processed/UL_PUR'
-        - 'data/processed/SNL'
-        - 'data/processed/HNEI'
+        - 'data/preprocessed/CALCE'
+        - 'data/preprocessed/RWTH'
+        - 'data/preprocessed/UL_PUR'
+        - 'data/preprocessed/SNL'
+        - 'data/preprocessed/HNEI'
 feature:
     name: 'FullModelFeatureExtractor'
     interp_dims: 1000

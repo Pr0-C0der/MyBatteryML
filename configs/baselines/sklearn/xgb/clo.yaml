@@ -2,7 +2,7 @@ model:
     name: 'XGBoostRULPredictor'
 train_test_split:
     name: 'MATRCLOTestTrainTestSplitter'
-    cell_data_path: 'data/processed/MATR'
+    cell_data_path: 'data/preprocessed/MATR'
 feature:
     name: 'VoltageCapacityMatrixFeatureExtractor'
     diff_base: 8

@@ -2,7 +2,7 @@ model:
     name: 'LinearRegressionRULPredictor'
 train_test_split:
     name: 'HUSTTrainTestSplitter'
-    cell_data_path: 'data/processed/HUST'
+    cell_data_path: 'data/preprocessed/HUST'
 feature:
     name: 'DischargeModelFeatureExtractor'
     interp_dims: 1000

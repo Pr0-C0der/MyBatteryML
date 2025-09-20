@@ -2,7 +2,7 @@ model:
     name: 'LinearRegressionRULPredictor'
 train_test_split:
     name: 'SNLTrainTestSplitter'
-    cell_data_path: 'data/processed/SNL'
+    cell_data_path: 'data/preprocessed/SNL'
 feature:
     name: 'FullModelFeatureExtractor'
     interp_dims: 1000

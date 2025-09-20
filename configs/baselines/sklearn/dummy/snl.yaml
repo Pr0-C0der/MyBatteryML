@@ -3,7 +3,7 @@ model:
 train_test_split:
     name: 'SNLTrainTestSplitter'
     # name: 'RandomTrainTestSplitter'
-    cell_data_path: 'data/processed/SNL'
+    cell_data_path: 'data/preprocessed/SNL'
 feature:
     name: 'VarianceModelFeatureExtractor'
     interp_dims: 1000

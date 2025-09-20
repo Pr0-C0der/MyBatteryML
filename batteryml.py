@@ -4,6 +4,7 @@
 # Copyright (c) Microsoft Corporation.
 
 import os
+import csv
 import argparse
 
 from pathlib import Path
@@ -136,6 +137,85 @@ def run(args):
             ckpt_to_resume=args.ckpt_to_resume,
             skip_if_executed=args.skip_if_executed
         )
+        # After evaluation, log metrics into CSVs
+        try:
+            workspace = Path(args.workspace) if args.workspace is not None else None
+            if workspace is not None and workspace.exists():
+                # Collect all predictions in the workspace
+                preds = sorted(workspace.glob('predictions_seed_*.pkl'))
+                # Attempt to load all scores for aggregation
+                all_scores = []
+                for p in preds:
+                    try:
+                        import pickle
+                        with open(p, 'rb') as f:
+                            obj = pickle.load(f)
+                            if 'scores' in obj:
+                                all_scores.append((p.stem, obj['scores']))
+                    except Exception:
+                        pass
+                # Log per-run metrics row
+                per_run_csv = workspace / 'metrics.csv'
+                per_run_csv_exists = per_run_csv.exists()
+                with open(per_run_csv, 'a', newline='') as f:
+                    writer = csv.DictWriter(f, fieldnames=['config','seed','RMSE','MAE','MAPE'])
+                    if not per_run_csv_exists:
+                        writer.writeheader()
+                    # If we have current scores printed in evaluation, fetch the latest file
+                    if len(all_scores):
+                        name, scores = all_scores[-1]
+                        # extract seed from filename if possible
+                        try:
+                            seed_str = name.split('predictions_seed_')[1].split('_')[0]
+                        except Exception:
+                            seed_str = str(args.seed)
+                        row = {
+                            'config': str(args.config),
+                            'seed': seed_str,
+                            'RMSE': scores.get('RMSE'),
+                            'MAE': scores.get('MAE'),
+                            'MAPE': scores.get('MAPE'),
+                        }
+                        writer.writerow(row)
+
+                # If this is a deep learning config (multiple seeds), log mean/std
+                is_nn = 'nn_models' in str(args.config)
+                if is_nn and len(all_scores) > 0:
+                    import numpy as np
+                    def agg(metric_key):
+                        vals = [s.get(metric_key) for _, s in all_scores if metric_key in s]
+                        if len(vals) == 0:
+                            return None, None, 0
+                        return float(np.mean(vals)), float(np.std(vals)), len(vals)
+
+                    rmse_mean, rmse_std, n_rmse = agg('RMSE')
+                    mae_mean, mae_std, n_mae = agg('MAE')
+                    mape_mean, mape_std, n_mape = agg('MAPE')
+
+                    agg_csv = workspace / 'metrics_aggregated.csv'
+                    agg_exists = agg_csv.exists()
+                    with open(agg_csv, 'a', newline='') as f:
+                        writer = csv.DictWriter(f, fieldnames=[
+                            'config','num_seeds',
+                            'RMSE_mean','RMSE_std',
+                            'MAE_mean','MAE_std',
+                            'MAPE_mean','MAPE_std'
+                        ])
+                        if not agg_exists:
+                            writer.writeheader()
+                        writer.writerow({
+                            'config': str(args.config),
+                            'num_seeds': max(n_rmse, n_mae, n_mape),
+                            'RMSE_mean': rmse_mean,
+                            'RMSE_std': rmse_std,
+                            'MAE_mean': mae_mean,
+                            'MAE_std': mae_std,
+                            'MAPE_mean': mape_mean,
+                            'MAPE_std': mape_std,
+                        })
+        except Exception:
+            # Logging should not break the primary flow
+            pass
 
 
 if __name__ == "__main__":

@@ -9,7 +9,7 @@ model:
     evaluate_freq: 100
 train_test_split:
     name: 'SNLTrainTestSplitter'
-    cell_data_path: 'data/processed/SNL'
+    cell_data_path: 'data/preprocessed/SNL'
 feature:
     name: 'VoltageCapacityMatrixFeatureExtractor'
     diff_base: 2

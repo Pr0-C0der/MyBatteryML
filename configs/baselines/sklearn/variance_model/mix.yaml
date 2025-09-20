@@ -3,12 +3,12 @@ model:
 train_test_split:
     name: 'MIX100TrainTestSplitter'
     cell_data_path:
-        - 'data/processed/CALCE'
-        - 'data/processed/RWTH'
-        - 'data/processed/UL_PUR'
-        - 'data/processed/HNEI'
-        - 'data/processed/MATR'
-        - 'data/processed/HUST'
+        - 'data/preprocessed/CALCE'
+        - 'data/preprocessed/RWTH'
+        - 'data/preprocessed/UL_PUR'
+        - 'data/preprocessed/HNEI'
+        - 'data/preprocessed/MATR'
+        - 'data/preprocessed/HUST'
 feature:
     name: 'VarianceModelFeatureExtractor'
     interp_dims: 1000

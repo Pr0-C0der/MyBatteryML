@@ -3,10 +3,10 @@ model:
 train_test_split:
     name: 'CRUHTrainTestSplitter'
     cell_data_path:
-        - 'data/processed/CALCE'
-        - 'data/processed/RWTH'
-        - 'data/processed/UL_PUR'
-        - 'data/processed/HNEI'
+        - 'data/preprocessed/CALCE'
+        - 'data/preprocessed/RWTH'
+        - 'data/preprocessed/UL_PUR'
+        - 'data/preprocessed/HNEI'
 feature:
     name: 'VarianceModelFeatureExtractor'
     interp_dims: 1000
