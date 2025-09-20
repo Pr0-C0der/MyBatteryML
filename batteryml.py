@@ -5,6 +5,7 @@
 
 import os
 import csv
+from typing import Dict, List
 import argparse
 
 from pathlib import Path
@@ -213,9 +214,114 @@ def run(args):
                             'MAPE_mean': mape_mean,
                             'MAPE_std': mape_std,
                         })
+
+                # Global metric matrices (results/metrics_<metric>.csv)
+                try:
+                    dataset_label = _dataset_label_from_pipeline(pipeline)
+                    model_label = _model_label_from_config_path(args.config)
+                    results_dir = Path('results')
+                    results_dir.mkdir(exist_ok=True)
+
+                    # Determine cell values for each metric
+                    def latest_single(metric_key):
+                        if len(all_scores) == 0:
+                            return None
+                        return all_scores[-1][1].get(metric_key)
+
+                    is_nn_cfg = 'nn_models' in str(args.config)
+                    import numpy as np
+                    for metric_key in ['RMSE','MAE','MAPE']:
+                        if is_nn_cfg and len(all_scores) > 0:
+                            vals = [s.get(metric_key) for _, s in all_scores if metric_key in s]
+                            if len(vals) > 0:
+                                mean_v = float(np.mean(vals))
+                                std_v = float(np.std(vals))
+                                cell_value = f"{mean_v:.4f}±{std_v:.4f}"
+                            else:
+                                cell_value = ''
+                        else:
+                            v = latest_single(metric_key)
+                            cell_value = f"{v:.4f}" if v is not None else ''
+                        _update_metric_matrix_csv(results_dir / f"metrics_{metric_key}.csv",
+                                                   dataset_label, model_label, cell_value)
+                except Exception:
+                    pass
         except Exception:
             # Logging should not break the primary flow
             pass
+
+
+def _dataset_label_from_pipeline(pipeline: Pipeline) -> str:
+    try:
+        name = pipeline.config['train_test_split'].get('name')
+        if name and name.endswith('TrainTestSplitter'):
+            name = name.replace('TrainTestSplitter','')
+        return name or 'UNKNOWN'
+    except Exception:
+        return 'UNKNOWN'
+
+
+def _model_label_from_config_path(config_path: str) -> str:
+    try:
+        p = Path(config_path)
+        parts = list(p.parts)
+        # Find 'baselines' segment
+        if 'baselines' in parts:
+            i = parts.index('baselines')
+            if i+2 < len(parts):
+                return parts[i+2]  # e.g., ridge, rf, mlp, lstm, transformer, cnn, etc.
+        return p.stem
+    except Exception:
+        return 'model'
+
+
+def _update_metric_matrix_csv(csv_path: Path, dataset_col: str, model_row: str, value: str):
+    # Ensure file exists with header
+    rows: List[Dict[str,str]] = []
+    header: List[str] = ['model']
+    if csv_path.exists():
+        with open(csv_path, 'r', newline='') as f:
+            reader = csv.reader(f)
+            try:
+                header = next(reader)
+            except StopIteration:
+                header = ['model']
+            for r in reader:
+                if len(r) < 1:
+                    continue
+                row = {header[i]: r[i] for i in range(min(len(header), len(r)))}
+                rows.append(row)
+    # Ensure dataset column exists
+    if dataset_col not in header:
+        header.append(dataset_col)
+        for r in rows:
+            if dataset_col not in r:
+                r[dataset_col] = ''
+    # Find or create model row
+    target = None
+    for r in rows:
+        if r.get('model') == model_row:
+            target = r
+            break
+    if target is None:
+        target = {'model': model_row}
+        # init all columns
+        for col in header:
+            if col != 'model':
+                target[col] = ''
+        rows.append(target)
+    # Update value
+    target[dataset_col] = value
+    # Write back
+    with open(csv_path, 'w', newline='') as f:
+        writer = csv.DictWriter(f, fieldnames=header)
+        writer.writeheader()
+        for r in rows:
+            # make sure all columns present
+            for col in header:
+                if col not in r:
+                    r[col] = ''
+            writer.writerow(r)
 
 
 if __name__ == "__main__":
