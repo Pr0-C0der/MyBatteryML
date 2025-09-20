@@ -2,7 +2,6 @@
 import sys
 from pathlib import Path
 import pickle
-from types import SimpleNamespace
 import pandas as pd
 
 # Ensure project root on path
@@ -10,7 +9,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-import batteryml as batteryml_cli
+from batteryml.pipeline import Pipeline
 
 
 def find_config_paths() -> list[Path]:
@@ -42,19 +41,25 @@ def evaluate_all(seed: int = 0, device: str = 'cpu') -> pd.DataFrame:
         try:
             ws = _workspace_for_config(cfg)
             ws.mkdir(parents=True, exist_ok=True)
-            args = SimpleNamespace(
-                config=str(cfg),
-                workspace=str(ws),
+
+            # Emulate CLI: build pipeline, train, then eval
+            pipe = Pipeline(str(cfg), str(ws))
+            model, dataset = pipe.train(
+                seed=seed,
                 device=device,
                 ckpt_to_resume=None,
-                train=True,
-                eval=True,
-                metric='RMSE,MAE,MAPE',
-                seed=seed,
-                epochs=None,
-                skip_if_executed='False',  # force re-run
+                skip_if_executed=False
             )
-            batteryml_cli.run(args)
+            pipe.evaluate(
+                seed=seed,
+                device=device,
+                metric=['RMSE','MAE','MAPE'],
+                model=model,
+                dataset=dataset,
+                ckpt_to_resume=None,
+                skip_if_executed=False
+            )
+
             scores = _latest_scores(ws)
             rows.append({
                 'config': str(cfg.relative_to(ROOT)),
