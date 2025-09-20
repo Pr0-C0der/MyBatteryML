@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 import sys
 from pathlib import Path
-import itertools
+import pickle
+from types import SimpleNamespace
 import pandas as pd
 
 # Ensure project root on path
@@ -9,7 +10,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from batteryml.pipeline import Pipeline
+import batteryml as batteryml_cli
 
 
 def find_config_paths() -> list[Path]:
@@ -20,29 +21,47 @@ def find_config_paths() -> list[Path]:
     return sorted(cfgs)
 
 
+def _workspace_for_config(cfg: Path) -> Path:
+    # Mirror batteryml.pipeline default but under a dedicated 'workspaces/eval' root
+    rel = cfg.relative_to(ROOT / 'configs').with_suffix('')
+    return ROOT / 'workspaces' / 'eval' / rel
+
+
+def _latest_scores(workspace: Path) -> dict:
+    preds = sorted(workspace.glob('predictions_seed_*.pkl'))
+    if not preds:
+        return {}
+    with open(preds[-1], 'rb') as f:
+        obj = pickle.load(f)
+    return obj.get('scores', {})
+
+
 def evaluate_all(seed: int = 0, device: str = 'cpu') -> pd.DataFrame:
     rows = []
     for cfg in find_config_paths():
         try:
-            pipe = Pipeline(config_path=str(cfg), workspace=None)
-            # Train if needed (skip_if_executed True)
-            pipe.train(seed=seed, device=device, skip_if_executed=True)
-            # Evaluate and capture scores
-            dataset, _ = None, None
-            # Rebuild dataset inside evaluate; prediction and scores printed inside
-            pipe.evaluate(seed=seed, device=device, metric=['RMSE', 'MAE'], skip_if_executed=False)
-            # Collect last scores from workspace prediction file is heavier; recompute scores directly
-            # Build dataset and model explicitly to get scores here
-            model, dataset = pipe.train(seed=seed, device=device, skip_if_executed=True)
-            prediction = model.predict(dataset)
-            scores = {
-                'RMSE': dataset.evaluate(prediction, 'RMSE'),
-                'MAE': dataset.evaluate(prediction, 'MAE'),
-            }
+            ws = _workspace_for_config(cfg)
+            ws.mkdir(parents=True, exist_ok=True)
+            args = SimpleNamespace(
+                config=str(cfg),
+                workspace=str(ws),
+                device=device,
+                ckpt_to_resume=None,
+                train=True,
+                eval=True,
+                metric='RMSE,MAE,MAPE',
+                seed=seed,
+                epochs=None,
+                skip_if_executed='False',  # force re-run
+            )
+            batteryml_cli.run(args)
+            scores = _latest_scores(ws)
             rows.append({
                 'config': str(cfg.relative_to(ROOT)),
-                'workspace': str(pipe.config['workspace']) if pipe.config['workspace'] else '',
-                **scores
+                'workspace': str(ws),
+                'RMSE': scores.get('RMSE', float('nan')),
+                'MAE': scores.get('MAE', float('nan')),
+                'MAPE': scores.get('MAPE', float('nan')),
             })
         except Exception as e:
             rows.append({
@@ -50,6 +69,7 @@ def evaluate_all(seed: int = 0, device: str = 'cpu') -> pd.DataFrame:
                 'workspace': '',
                 'RMSE': float('nan'),
                 'MAE': float('nan'),
+                'MAPE': float('nan'),
                 'error': str(e)
             })
     return pd.DataFrame(rows)
