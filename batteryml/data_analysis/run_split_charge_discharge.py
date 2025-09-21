@@ -228,7 +228,8 @@ def plot_scalar_feature_vs_cycle(battery: BatteryData, feature_key: str, out_dir
     plt.title(f'{feature_key.replace("_"," ").title()} vs Cycle Number - {battery.cell_id}', fontsize=14)
     plt.grid(True, alpha=0.3)
     plt.tight_layout()
-    plt.savefig(fdir / f"{battery.cell_id.replace('/','_').replace('\\','_')}_{feature_key}_cycle.png", dpi=300, bbox_inches='tight')
+    safe_id = battery.cell_id.replace('/', '_').replace('\\', '_')
+    plt.savefig(fdir / f"{safe_id}_{feature_key}_cycle.png", dpi=300, bbox_inches='tight')
     plt.close()
 
 
