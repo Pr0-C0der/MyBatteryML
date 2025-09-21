@@ -105,6 +105,11 @@ class CorrelationAnalyzer:
                     except TypeError:
                         # Fallback: treat as available if not None
                         available_features.append(feature_name)
+
+        # Add new derived features to advertised list
+        for extra in ['avg_c_rate', 'energy_charge', 'energy_discharge', 'energy_net', 'power_mean', 'power_peak']:
+            if extra not in available_features:
+                available_features.append(extra)
         
         return available_features
     
@@ -144,19 +149,65 @@ class CorrelationAnalyzer:
                 'energy_charge': 'energy_charge',
                 'energy_discharge': 'energy_discharge',
                 'qdlin': 'Qdlin',
-                'tdlin': 'Tdlin'
+                'tdlin': 'Tdlin',
+                # New derived features (computed below)
+                'avg_c_rate': 'avg_c_rate',
+                'energy_net': 'energy_net',
+                'power_mean': 'power_mean',
+                'power_peak': 'power_peak'
             }
             
             for feature_name in self.features:
                 if feature_name in feature_mapping:
                     attr_name = feature_mapping[feature_name]
                     if hasattr(cycle_data, attr_name):
-                        feature_data = getattr(cycle_data, attr_name)
+                        feature_data = getattr(cycle_data, attr_name, None)
+                        # Derived computations
+                        if feature_name == 'avg_c_rate':
+                            try:
+                                I = np.array(cycle_data.current_in_A or [])
+                                I = I[~np.isnan(I)]
+                                C = battery.nominal_capacity_in_Ah or 0.0
+                                row_data['avg_c_rate'] = float(np.mean(np.abs(I))/C) if (I.size>0 and C>0) else np.nan
+                            except Exception:
+                                row_data['avg_c_rate'] = np.nan
+                            continue
+                        if feature_name in ['energy_charge','energy_discharge','energy_net','power_mean','power_peak']:
+                            try:
+                                V = np.array(cycle_data.voltage_in_V or [])
+                                I = np.array(cycle_data.current_in_A or [])
+                                t = np.array(cycle_data.time_in_s or [])
+                                n = min(len(V), len(I), len(t))
+                                V, I, t = V[:n], I[:n], t[:n]
+                                mask = (~np.isnan(V)) & (~np.isnan(I)) & (~np.isnan(t))
+                                V, I, t = V[mask], I[mask], t[mask]
+                                if V.size == 0:
+                                    raise ValueError
+                                P = V * I
+                                ch_mask = I > 0
+                                dis_mask = I < 0
+                                e_c = np.trapz(P[ch_mask], t[ch_mask]) / 3600.0 if np.any(ch_mask) else 0.0
+                                e_d = -np.trapz(P[dis_mask], t[dis_mask]) / 3600.0 if np.any(dis_mask) else 0.0
+                                p_mean = float(np.mean(P))
+                                p_peak = float(np.max(np.abs(P)))
+                                row_data['energy_charge'] = float(e_c)
+                                row_data['energy_discharge'] = float(e_d)
+                                row_data['energy_net'] = float(e_c - e_d)
+                                row_data['power_mean'] = p_mean
+                                row_data['power_peak'] = p_peak
+                            except Exception:
+                                row_data['energy_charge'] = np.nan
+                                row_data['energy_discharge'] = np.nan
+                                row_data['energy_net'] = np.nan
+                                row_data['power_mean'] = np.nan
+                                row_data['power_peak'] = np.nan
+                            continue
+
+                        # Original handling
                         if feature_data is None:
                             row_data[feature_name] = np.nan
                         else:
                             if np.isscalar(feature_data):
-                                # Single numeric value for the cycle
                                 try:
                                     val = float(feature_data)
                                     row_data[feature_name] = val if not np.isnan(val) else np.nan
@@ -164,7 +215,6 @@ class CorrelationAnalyzer:
                                     row_data[feature_name] = np.nan
                             else:
                                 try:
-                                    # Convert to numpy array and filter valid data
                                     feature_array = np.array(feature_data)
                                     valid_data = feature_array[~np.isnan(feature_array)]
                                     row_data[feature_name] = np.mean(valid_data) if valid_data.size > 0 else np.nan

@@ -424,7 +424,12 @@ class CyclePlotter:
         plt.close()
 
     def plot_energy_vs_cycle(self, battery: BatteryData, save_path: Path):
-        """Plot aggregate charge/discharge energy (Wh) per cycle."""
+        """Plot aggregate charge/discharge energy (Wh) and net energy per cycle.
+
+        charge_energy_Wh = ∫ V·I dt / 3600 over I>0
+        discharge_energy_Wh = -∫ V·I dt / 3600 over I<0 (reported positive)
+        net_energy_Wh = charge_energy_Wh - discharge_energy_Wh
+        """
         xs, e_ch, e_dis = [], [], []
         for c in battery.cycle_data:
             if c.voltage_in_V is None or c.current_in_A is None or c.time_in_s is None:
@@ -459,6 +464,9 @@ class CyclePlotter:
         e_dis_sorted = np.array(e_dis)[order]
         plt.plot(xs_sorted, e_ch_sorted, marker='o', linewidth=1.5, alpha=0.9, label='Charge Energy (Wh)')
         plt.plot(xs_sorted, e_dis_sorted, marker='s', linewidth=1.5, alpha=0.9, label='Discharge Energy (Wh)')
+        # Net energy line
+        net_sorted = e_ch_sorted - e_dis_sorted
+        plt.plot(xs_sorted, net_sorted, marker='^', linewidth=1.5, alpha=0.9, label='Net Energy (Wh)')
         plt.xlabel('Cycle Number', fontsize=12)
         plt.ylabel('Energy (Wh)', fontsize=12)
         plt.title(f'Energy per Cycle - {battery.cell_id}', fontsize=14)
