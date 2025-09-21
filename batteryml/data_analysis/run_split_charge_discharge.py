@@ -172,12 +172,11 @@ def plot_battery(battery: BatteryData, out_dir: Path, title_suffix: str, cycle_g
                         if attr_name in ['voltage_in_V','discharge_capacity_in_Ah','charge_capacity_in_Ah']:
                             mask = mask & (y > 0)
                         if np.any(mask):
-                            xr = x[mask] - x[mask][0]
-                            plt.plot(xr, y[mask], color=colors[i], linewidth=1.5, alpha=0.8,
+                            plt.plot(x[mask], y[mask], color=colors[i], linewidth=1.5, alpha=0.8,
                                      label=f'Cycle {c.cycle_number}')
                 except Exception:
                     pass
-        plt.xlabel('Relative Time (s)'); plt.ylabel(ylabel)
+        plt.xlabel('Time (s)'); plt.ylabel(ylabel)
         plt.title(f'{key.title()} vs Time - {title_suffix}')
         plt.grid(True, alpha=0.3)
         plt.tight_layout()

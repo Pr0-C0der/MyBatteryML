@@ -174,17 +174,16 @@ class CyclePlotter:
                                 if attr_name in ['voltage_in_V', 'discharge_capacity_in_Ah', 'charge_capacity_in_Ah']:
                                     valid_mask = valid_mask & (feature_values > 0)
                                 if np.any(valid_mask):
-                                    relative_time = time[valid_mask] - time[valid_mask][0]
-                                    plt.plot(relative_time, feature_values[valid_mask],
+                                    plt.plot(time[valid_mask], feature_values[valid_mask],
                                              color=colors[i], linewidth=1.5, alpha=0.8,
                                              label=f'Cycle {cycle_data.cycle_number}')
                         except Exception:
                             # Skip plotting this cycle/feature on conversion issues
                             pass
         
-        plt.xlabel('Relative Time (s)', fontsize=12)
+        plt.xlabel('Time (s)', fontsize=12)
         plt.ylabel(ylabel, fontsize=12)
-        plt.title(f'{feature_name.title()} vs Relative Time - {battery.cell_id}', fontsize=14)
+        plt.title(f'{feature_name.title()} vs Time - {battery.cell_id}', fontsize=14)
         plt.grid(True, alpha=0.3)
         
         # Add colorbar to show cycle progression
