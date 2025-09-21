@@ -182,41 +182,22 @@ def load_config(config_path: str,
 def build_dataset(configs: dict,
                   device: str,
                   config_fields: list | None = None):
-    strings = []
-    config_fields = config_fields or CONFIG_FIELDS[1:]
-    for field in config_fields:
-        strings.append(recursive_dump_string(configs[field]))
-    filename = hash_string('+'.join(strings))
-    cache_dir = Path('cache')
-    if not cache_dir.exists():
-        cache_dir.mkdir()
-    cache_file = Path(cache_dir / f'battery_cache_{filename}.pkl')
+    # Always build dataset fresh (no caching)
+    task = Task(
+        label_annotator=configs['label'],
+        feature_extractor=configs['feature'],
+        train_test_splitter=configs['train_test_split'],
+        feature_transformation=configs['feature_transformation'],
+        label_transformation=configs['label_transformation'])
 
-    if cache_file.exists():
-        print(f'Load datasets from cache {str(cache_file)}.')
-        with open(cache_file, 'rb') as f:
-            data = pickle.load(f)
-            dataset = data['dataset']
-            raw_data = data['raw_data']
-    else:
-        task = Task(
-            label_annotator=configs['label'],
-            feature_extractor=configs['feature'],
-            train_test_splitter=configs['train_test_split'],
-            feature_transformation=configs['feature_transformation'],
-            label_transformation=configs['label_transformation'])
-
-        dataset = task.build()
-        train_cells, test_cells = task.get_raw_data()
-        data = {'dataset':dataset,
-                'raw_data':{
-                    'train_cells': train_cells,
-                    'test_cells': test_cells,
-                }}
-        raw_data = data['raw_data']
-        # store cache
-        with open(cache_file, 'wb') as f:
-            pickle.dump(data, f)
+    dataset = task.build()
+    train_cells, test_cells = task.get_raw_data()
+    data = {'dataset': dataset,
+            'raw_data': {
+                'train_cells': train_cells,
+                'test_cells': test_cells,
+            }}
+    raw_data = data['raw_data']
 
     return dataset.to(device), raw_data
 

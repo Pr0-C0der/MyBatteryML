@@ -71,20 +71,22 @@ class NNModel(BaseModel, nn.Module, abc.ABC):
                     loss.backward()
                     optimizer.step()
 
-            if self.checkpoint_freq is not None and \
-                    (epoch + 1) % self.checkpoint_freq == 0:
-                filename = f'{timestamp}_seed_{seed}_epoch_{epoch+1}.ckpt'
-                if self.workspace is not None:
-                    self.dump_checkpoint(self.workspace / filename)
-                    latest = self.workspace / filename
+            # Disable saving intermediate checkpoints to workspace
+            # if self.checkpoint_freq is not None and \
+            #         (epoch + 1) % self.checkpoint_freq == 0:
+            #     filename = f'{timestamp}_seed_{seed}_epoch_{epoch+1}.ckpt'
+            #     if self.workspace is not None:
+            #         self.dump_checkpoint(self.workspace / filename)
+            #         latest = self.workspace / filename
 
             if (epoch + 1) % self.evaluate_freq == 0:
                 pred = self.predict(dataset)
                 score = dataset.evaluate(pred, 'RMSE')
                 print(f'[{epoch+1}/{self.train_epochs}] RMSE {score:.2f}', flush=True)
 
-        if self.workspace is not None:
-            self.link_latest_checkpoint(latest)
+        # Do not link/save latest checkpoint
+        # if self.workspace is not None:
+        #     self.link_latest_checkpoint(latest)
 
     @torch.no_grad()
     def predict(self, dataset: DataBundle, data_type: str='test') -> torch.Tensor:
