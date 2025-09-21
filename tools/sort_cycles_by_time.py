@@ -96,6 +96,9 @@ def main():
         dst_dir = base_dst / ds.name
         for pkl in ds.glob('*.pkl'):
             out = dst_dir / pkl.name
+            # Skip if already processed
+            if out.exists():
+                continue
             process_file(pkl, out)
 
 
