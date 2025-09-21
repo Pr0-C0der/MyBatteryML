@@ -15,6 +15,7 @@ data_analysis_split_charge_discharge/<DATASET>/
 """
 
 import sys
+from pathlib import Path
 import numpy as np
 import pandas as pd
 import matplotlib
@@ -22,9 +23,13 @@ matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import seaborn as sns
 
-from pathlib import Path
 from typing import List, Tuple, Optional
 from tqdm import tqdm
+
+# Ensure project root is on sys.path when running this file directly
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
 from batteryml.data.battery_data import BatteryData, CycleData
 from batteryml.label.rul import RULLabelAnnotator
