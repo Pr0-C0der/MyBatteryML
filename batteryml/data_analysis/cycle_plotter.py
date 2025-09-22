@@ -87,19 +87,24 @@ class CyclePlotter:
         }
         
         for attr, feature_name in feature_mapping.items():
+            attr_value = None
             if hasattr(first_cycle, attr):
                 attr_value = getattr(first_cycle, attr)
-                if attr_value is None:
-                    continue
-                # Consider scalars as available; for sequences require non-empty
-                if isinstance(attr_value, (int, float)):
-                    available_features.append(feature_name)
-                else:
-                    try:
-                        if len(attr_value) > 0:
-                            available_features.append(feature_name)
-                    except TypeError:
+            else:
+                # Fallback: additional_data may store MATR extras (e.g., Qdlin, Tdlin)
+                if hasattr(first_cycle, 'additional_data') and attr in getattr(first_cycle, 'additional_data', {}):
+                    attr_value = first_cycle.additional_data.get(attr)
+            if attr_value is None:
+                continue
+            # Consider scalars as available; for sequences require non-empty
+            if isinstance(attr_value, (int, float)):
+                available_features.append(feature_name)
+            else:
+                try:
+                    if len(attr_value) > 0:
                         available_features.append(feature_name)
+                except TypeError:
+                    available_features.append(feature_name)
         
         # Always include basic features if they exist
         basic_features = ['voltage', 'current', 'capacity', 'temperature']
@@ -160,8 +165,11 @@ class CyclePlotter:
         for i, cycle_idx in enumerate(selected_cycles):
             if cycle_idx < len(battery.cycle_data):
                 cycle_data = battery.cycle_data[cycle_idx]
+                feature_data = None
                 if hasattr(cycle_data, attr_name):
                     feature_data = getattr(cycle_data, attr_name)
+                elif hasattr(cycle_data, 'additional_data') and attr_name in getattr(cycle_data, 'additional_data', {}):
+                    feature_data = cycle_data.additional_data.get(attr_name)
                     time_data = cycle_data.time_in_s
                     # Only plot if both series data exist and are non-empty arrays
                     if feature_data is not None and time_data is not None:
@@ -299,25 +307,26 @@ class CyclePlotter:
                     save_path = feature_dir / f"{cell_id}_{feature}_time.png"
                     self.plot_feature_vs_time(battery, feature, save_path)
 
-            # Derived analysis: Power vs time
-            power_dir = self.output_dir / "power_vs_time"
-            power_dir.mkdir(exist_ok=True)
-            self.plot_power_vs_time(battery, power_dir / f"{cell_id}_power_time.png")
-
             # Derived analysis: Average C-rate per cycle
             c_rate_dir = self.output_dir / "avg_c_rate_vs_cycle"
             c_rate_dir.mkdir(exist_ok=True)
             self.plot_avg_c_rate_vs_cycle(battery, c_rate_dir / f"{cell_id}_avg_c_rate_cycle.png")
 
-            # Derived analysis: Energy per cycle (charge/discharge)
-            energy_dir = self.output_dir / "energy_vs_cycle"
-            energy_dir.mkdir(exist_ok=True)
-            self.plot_energy_vs_cycle(battery, energy_dir / f"{cell_id}_energy_cycle.png")
-
-            # Derived analysis: Coulombic efficiency per cycle
-            eff_dir = self.output_dir / "coulombic_efficiency_vs_cycle"
-            eff_dir.mkdir(exist_ok=True)
-            self.plot_coulombic_efficiency_vs_cycle(battery, eff_dir / f"{cell_id}_ceff_cycle.png")
+            # Voltage-Current twin-axis plots for cycle 0 and last cycle
+            vi_base = self.output_dir / "voltage_current"
+            (vi_base / "cycle_0").mkdir(parents=True, exist_ok=True)
+            (vi_base / "cycle_last").mkdir(parents=True, exist_ok=True)
+            if len(battery.cycle_data) > 0:
+                self.plot_voltage_current_twin(
+                    battery,
+                    cycle_index=0,
+                    save_path=vi_base / "cycle_0" / f"{cell_id}_v_i.png"
+                )
+                self.plot_voltage_current_twin(
+                    battery,
+                    cycle_index=len(battery.cycle_data) - 1,
+                    save_path=vi_base / "cycle_last" / f"{cell_id}_v_i.png"
+                )
             
         except Exception as e:
             print(f"Error plotting features for battery {battery.cell_id}: {e}")
@@ -348,44 +357,45 @@ class CyclePlotter:
         for feature in self.features:
             print(f"  - {feature} vs time: {self.output_dir / f'{feature}_vs_time'}")
 
-    def plot_power_vs_time(self, battery: BatteryData, save_path: Path):
-        """Plot power P=V*I vs relative time for selected cycles."""
-        selected_cycles = self.select_cycles(len(battery.cycle_data))
-        plt.figure(figsize=(12, 8))
-        colors = plt.cm.RdYlBu_r(np.linspace(0, 1, len(selected_cycles)))
-        for i, idx in enumerate(selected_cycles):
-            if idx >= len(battery.cycle_data):
-                continue
-            c = battery.cycle_data[idx]
-            if c.voltage_in_V is None or c.current_in_A is None or c.time_in_s is None:
-                continue
-            try:
-                V = np.array(c.voltage_in_V)
-                I = np.array(c.current_in_A)
-                t = np.array(c.time_in_s)
-                if V.size == 0 or I.size == 0 or t.size == 0:
-                    continue
-                n = min(len(V), len(I), len(t))
-                V, I, t = V[:n], I[:n], t[:n]
-                mask = (~np.isnan(V)) & (~np.isnan(I)) & (~np.isnan(t))
-                if not np.any(mask):
-                    continue
-                P = V[mask] * I[mask]
-                tr = t[mask] - t[mask][0]
-                plt.plot(tr, P, color=colors[i], linewidth=1.5, alpha=0.8, label=f'Cycle {c.cycle_number}')
-            except Exception:
-                continue
-        plt.xlabel('Relative Time (s)', fontsize=12)
-        plt.ylabel('Power (W)', fontsize=12)
-        plt.title(f'Power vs Relative Time - {battery.cell_id}', fontsize=14)
-        plt.grid(True, alpha=0.3)
-        sm = plt.cm.ScalarMappable(cmap=plt.cm.RdYlBu_r, norm=plt.Normalize(vmin=0, vmax=len(selected_cycles)-1))
-        sm.set_array([])
-        cbar = plt.colorbar(sm, ax=plt.gca(), shrink=0.8)
-        cbar.set_label('Cycle Index', fontsize=10)
-        plt.tight_layout()
-        plt.savefig(save_path, dpi=300, bbox_inches='tight')
-        plt.close()
+    def plot_voltage_current_twin(self, battery: BatteryData, cycle_index: int, save_path: Path):
+        """Plot voltage (left y, blue) and current (right y, red) vs relative time for a cycle."""
+        if cycle_index < 0 or cycle_index >= len(battery.cycle_data):
+            return
+        c = battery.cycle_data[cycle_index]
+        if c.voltage_in_V is None or c.current_in_A is None or c.time_in_s is None:
+            return
+        try:
+            V = np.array(c.voltage_in_V)
+            I = np.array(c.current_in_A)
+            t = np.array(c.time_in_s)
+            n = min(len(V), len(I), len(t))
+            V, I, t = V[:n], I[:n], t[:n]
+            mask = (~np.isnan(V)) & (~np.isnan(I)) & (~np.isnan(t))
+            if not np.any(mask):
+                return
+            V, I, t = V[mask], I[mask], t[mask]
+            tr = t - t[0]
+
+            fig, ax1 = plt.subplots(figsize=(12, 6))
+            color_v = 'tab:blue'
+            color_i = 'tab:red'
+            ax1.set_xlabel('Relative Time (s)')
+            ax1.set_ylabel('Voltage (V)', color=color_v)
+            ax1.plot(tr, V, color=color_v, linewidth=1.6)
+            ax1.tick_params(axis='y', labelcolor=color_v)
+
+            ax2 = ax1.twinx()
+            ax2.set_ylabel('Current (A)', color=color_i)
+            ax2.plot(tr, I, color=color_i, linewidth=1.2, alpha=0.9)
+            ax2.tick_params(axis='y', labelcolor=color_i)
+
+            plt.title(f'Voltage & Current vs Relative Time - {battery.cell_id} (Cycle {c.cycle_number})', fontsize=13)
+            fig.tight_layout()
+            plt.grid(True, alpha=0.3)
+            plt.savefig(save_path, dpi=300, bbox_inches='tight')
+            plt.close(fig)
+        except Exception:
+            return
 
     def plot_avg_c_rate_vs_cycle(self, battery: BatteryData, save_path: Path):
         """Plot average |I|/C over each cycle (C-rate)."""
@@ -423,92 +433,7 @@ class CyclePlotter:
         plt.savefig(save_path, dpi=300, bbox_inches='tight')
         plt.close()
 
-    def plot_energy_vs_cycle(self, battery: BatteryData, save_path: Path):
-        """Plot aggregate charge/discharge energy (Wh) and net energy per cycle.
-
-        charge_energy_Wh = ∫ V·I dt / 3600 over I>0
-        discharge_energy_Wh = -∫ V·I dt / 3600 over I<0 (reported positive)
-        net_energy_Wh = charge_energy_Wh - discharge_energy_Wh
-        """
-        xs, e_ch, e_dis = [], [], []
-        for c in battery.cycle_data:
-            if c.voltage_in_V is None or c.current_in_A is None or c.time_in_s is None:
-                continue
-            try:
-                V = np.array(c.voltage_in_V)
-                I = np.array(c.current_in_A)
-                t = np.array(c.time_in_s)
-                n = min(len(V), len(I), len(t))
-                V, I, t = V[:n], I[:n], t[:n]
-                mask = (~np.isnan(V)) & (~np.isnan(I)) & (~np.isnan(t))
-                if not np.any(mask):
-                    continue
-                V, I, t = V[mask], I[mask], t[mask]
-                # Charge energy: integrate where I>0
-                ch_mask = I > 0
-                dis_mask = I < 0
-                e_c = np.trapz(V[ch_mask] * I[ch_mask], t[ch_mask]) / 3600.0 if np.any(ch_mask) else 0.0
-                # Discharge energy: make positive
-                e_d = -np.trapz(V[dis_mask] * I[dis_mask], t[dis_mask]) / 3600.0 if np.any(dis_mask) else 0.0
-                xs.append(c.cycle_number)
-                e_ch.append(float(e_c))
-                e_dis.append(float(e_d))
-            except Exception:
-                continue
-        if len(xs) == 0:
-            return
-        plt.figure(figsize=(10, 6))
-        order = np.argsort(np.array(xs))
-        xs_sorted = np.array(xs)[order]
-        e_ch_sorted = np.array(e_ch)[order]
-        e_dis_sorted = np.array(e_dis)[order]
-        plt.plot(xs_sorted, e_ch_sorted, marker='o', linewidth=1.5, alpha=0.9, label='Charge Energy (Wh)')
-        plt.plot(xs_sorted, e_dis_sorted, marker='s', linewidth=1.5, alpha=0.9, label='Discharge Energy (Wh)')
-        # Net energy line
-        net_sorted = e_ch_sorted - e_dis_sorted
-        plt.plot(xs_sorted, net_sorted, marker='^', linewidth=1.5, alpha=0.9, label='Net Energy (Wh)')
-        plt.xlabel('Cycle Number', fontsize=12)
-        plt.ylabel('Energy (Wh)', fontsize=12)
-        plt.title(f'Energy per Cycle - {battery.cell_id}', fontsize=14)
-        plt.grid(True, alpha=0.3)
-        plt.legend()
-        plt.tight_layout()
-        plt.savefig(save_path, dpi=300, bbox_inches='tight')
-        plt.close()
-
-    def plot_coulombic_efficiency_vs_cycle(self, battery: BatteryData, save_path: Path):
-        """Plot Coulombic efficiency η = Qd_out / Qc_in per cycle."""
-        xs, etas = [], []
-        for c in battery.cycle_data:
-            Qc = c.charge_capacity_in_Ah
-            Qd = c.discharge_capacity_in_Ah
-            if Qc is None or Qd is None:
-                continue
-            try:
-                Qc_arr = np.array(Qc)
-                Qd_arr = np.array(Qd)
-                Qc_max = np.nanmax(Qc_arr) if Qc_arr.size > 0 else np.nan
-                Qd_max = np.nanmax(Qd_arr) if Qd_arr.size > 0 else np.nan
-                if np.isfinite(Qc_max) and Qc_max > 0 and np.isfinite(Qd_max):
-                    eta = float(Qd_max / Qc_max)
-                    xs.append(c.cycle_number)
-                    etas.append(eta)
-            except Exception:
-                continue
-        if len(xs) == 0:
-            return
-        plt.figure(figsize=(10, 6))
-        order = np.argsort(np.array(xs))
-        xs_sorted = np.array(xs)[order]
-        etas_sorted = np.array(etas)[order]
-        plt.plot(xs_sorted, etas_sorted, marker='o', linewidth=1.5, alpha=0.9)
-        plt.xlabel('Cycle Number', fontsize=12)
-        plt.ylabel('Coulombic Efficiency (Qd/Qc)', fontsize=12)
-        plt.title(f'Coulombic Efficiency per Cycle - {battery.cell_id}', fontsize=14)
-        plt.grid(True, alpha=0.3)
-        plt.tight_layout()
-        plt.savefig(save_path, dpi=300, bbox_inches='tight')
-        plt.close()
+    # (Removed) power/energy/coulombic efficiency plotting functions per user request
 
 
 def main():

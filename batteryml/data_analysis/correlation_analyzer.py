@@ -84,8 +84,6 @@ class CorrelationAnalyzer:
             'charge_capacity_in_Ah': 'charge_capacity',
             'temperature_in_C': 'temperature',
             'internal_resistance_in_ohm': 'internal_resistance',
-            'energy_charge': 'energy_charge',
-            'energy_discharge': 'energy_discharge',
             'Qdlin': 'qdlin',
             'Tdlin': 'tdlin'
         }
@@ -107,7 +105,7 @@ class CorrelationAnalyzer:
                         available_features.append(feature_name)
 
         # Add new derived features to advertised list
-        for extra in ['avg_c_rate', 'energy_charge', 'energy_discharge', 'energy_net', 'power_mean', 'power_peak']:
+        for extra in ['avg_c_rate']:
             if extra not in available_features:
                 available_features.append(extra)
         
@@ -146,15 +144,11 @@ class CorrelationAnalyzer:
                 'charge_capacity': 'charge_capacity_in_Ah',
                 'temperature': 'temperature_in_C',
                 'internal_resistance': 'internal_resistance_in_ohm',
-                'energy_charge': 'energy_charge',
-                'energy_discharge': 'energy_discharge',
                 'qdlin': 'Qdlin',
                 'tdlin': 'Tdlin',
                 # New derived features (computed below)
                 'avg_c_rate': 'avg_c_rate',
-                'energy_net': 'energy_net',
-                'power_mean': 'power_mean',
-                'power_peak': 'power_peak'
+                # removed: energy/power related derived metrics
             }
             
             for feature_name in self.features:
@@ -172,36 +166,7 @@ class CorrelationAnalyzer:
                             except Exception:
                                 row_data['avg_c_rate'] = np.nan
                             continue
-                        if feature_name in ['energy_charge','energy_discharge','energy_net','power_mean','power_peak']:
-                            try:
-                                V = np.array(cycle_data.voltage_in_V or [])
-                                I = np.array(cycle_data.current_in_A or [])
-                                t = np.array(cycle_data.time_in_s or [])
-                                n = min(len(V), len(I), len(t))
-                                V, I, t = V[:n], I[:n], t[:n]
-                                mask = (~np.isnan(V)) & (~np.isnan(I)) & (~np.isnan(t))
-                                V, I, t = V[mask], I[mask], t[mask]
-                                if V.size == 0:
-                                    raise ValueError
-                                P = V * I
-                                ch_mask = I > 0
-                                dis_mask = I < 0
-                                e_c = np.trapz(P[ch_mask], t[ch_mask]) / 3600.0 if np.any(ch_mask) else 0.0
-                                e_d = -np.trapz(P[dis_mask], t[dis_mask]) / 3600.0 if np.any(dis_mask) else 0.0
-                                p_mean = float(np.mean(P))
-                                p_peak = float(np.max(np.abs(P)))
-                                row_data['energy_charge'] = float(e_c)
-                                row_data['energy_discharge'] = float(e_d)
-                                row_data['energy_net'] = float(e_c - e_d)
-                                row_data['power_mean'] = p_mean
-                                row_data['power_peak'] = p_peak
-                            except Exception:
-                                row_data['energy_charge'] = np.nan
-                                row_data['energy_discharge'] = np.nan
-                                row_data['energy_net'] = np.nan
-                                row_data['power_mean'] = np.nan
-                                row_data['power_peak'] = np.nan
-                            continue
+                        # removed: energy/power features
 
                         # Original handling
                         if feature_data is None:
