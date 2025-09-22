@@ -327,6 +327,41 @@ class CyclePlotter:
                     cycle_index=len(battery.cycle_data) - 1,
                     save_path=vi_base / "cycle_last" / f"{cell_id}_v_i.png"
                 )
+
+            # Overlay plots: first vs last cycle for Current and Voltage (blue=first, red=last)
+            ov_base_cur = self.output_dir / "current_first_last"
+            ov_base_vol = self.output_dir / "voltage_first_last"
+            ov_base_cur.mkdir(parents=True, exist_ok=True)
+            ov_base_vol.mkdir(parents=True, exist_ok=True)
+            if len(battery.cycle_data) > 0:
+                self.plot_first_last_overlay(
+                    battery,
+                    feature='current',
+                    attr='current_in_A',
+                    ylabel='Current (A)',
+                    save_path=ov_base_cur / f"{cell_id}_current_first_last.png"
+                )
+                self.plot_first_last_overlay(
+                    battery,
+                    feature='voltage',
+                    attr='voltage_in_V',
+                    ylabel='Voltage (V)',
+                    save_path=ov_base_vol / f"{cell_id}_voltage_first_last.png"
+                )
+
+            # New features vs cycle: peak constant current/voltage lengths and total cycle length
+            pcc_dir = self.output_dir / "peak_constant_current_length_vs_cycle"
+            pcv_dir = self.output_dir / "peak_constant_voltage_length_vs_cycle"
+            cyc_dir = self.output_dir / "cycle_length_vs_cycle"
+            pcc_dir.mkdir(parents=True, exist_ok=True)
+            pcv_dir.mkdir(parents=True, exist_ok=True)
+            cyc_dir.mkdir(parents=True, exist_ok=True)
+            self.plot_peak_lengths_and_cycle_length(
+                battery,
+                pcc_dir / f"{cell_id}_peak_cc_length_cycle.png",
+                pcv_dir / f"{cell_id}_peak_cv_length_cycle.png",
+                cyc_dir / f"{cell_id}_cycle_length_cycle.png"
+            )
             
         except Exception as e:
             print(f"Error plotting features for battery {battery.cell_id}: {e}")
@@ -396,6 +431,125 @@ class CyclePlotter:
             plt.close(fig)
         except Exception:
             return
+
+    def plot_first_last_overlay(self, battery: BatteryData, feature: str, attr: str, ylabel: str, save_path: Path):
+        """Overlay first (blue) and last (red) cycle for a single feature vs relative time."""
+        if len(battery.cycle_data) == 0:
+            return
+        idx_first = 0
+        idx_last = len(battery.cycle_data) - 1
+
+        def get_xy(c):
+            vals = getattr(c, attr, None)
+            t = getattr(c, 'time_in_s', None)
+            if vals is None or t is None:
+                return None, None
+            try:
+                y = np.array(vals); x = np.array(t)
+                n = min(len(y), len(x))
+                y, x = y[:n], x[:n]
+                m = (~np.isnan(y)) & (~np.isnan(x))
+                if not np.any(m):
+                    return None, None
+                return x[m] - x[m][0], y[m]
+            except Exception:
+                return None, None
+
+        c_first = battery.cycle_data[idx_first]
+        c_last = battery.cycle_data[idx_last]
+        x1, y1 = get_xy(c_first)
+        x2, y2 = get_xy(c_last)
+        if x1 is None or x2 is None:
+            return
+        plt.figure(figsize=(12, 6))
+        plt.plot(x1, y1, color='tab:blue', linewidth=1.6, label=f'Cycle {c_first.cycle_number}')
+        plt.plot(x2, y2, color='tab:red', linewidth=1.6, label=f'Cycle {c_last.cycle_number}')
+        plt.xlabel('Relative Time (s)', fontsize=12)
+        plt.ylabel(ylabel, fontsize=12)
+        plt.title(f'{feature.title()} (First vs Last Cycle) - {battery.cell_id}', fontsize=14)
+        plt.grid(True, alpha=0.3)
+        plt.legend()
+        plt.tight_layout()
+        plt.savefig(save_path, dpi=300, bbox_inches='tight')
+        plt.close()
+
+    def _last_peak_length(self, arr: np.ndarray, t: np.ndarray, rtol: float = 1e-3, atol: float = 1e-6) -> float:
+        """Length from start to the last index where value equals its maximum (plateau end), using isclose.
+        Returns time in seconds (t[last_peak] - t[0]). If invalid, returns NaN.
+        """
+        if arr.size == 0 or t.size == 0:
+            return np.nan
+        vmax = np.nanmax(arr)
+        if not np.isfinite(vmax):
+            return np.nan
+        close_mask = np.isclose(arr, vmax, rtol=rtol, atol=atol)
+        if not np.any(close_mask):
+            return np.nan
+        last_idx = np.where(close_mask)[0][-1]
+        try:
+            return float(t[last_idx] - t[0])
+        except Exception:
+            return np.nan
+
+    def plot_peak_lengths_and_cycle_length(self, battery: BatteryData, save_pcc: Path, save_pcv: Path, save_cyc: Path):
+        xs, pcc, pcv, cyc = [], [], [], []
+        for c in battery.cycle_data:
+            t = np.array(c.time_in_s or [])
+            I = np.array(c.current_in_A or [])
+            V = np.array(c.voltage_in_V or [])
+            n = min(len(t), len(I), len(V)) if len(I) and len(V) else len(t)
+            t = t[:n]
+            I = I[:n] if len(I) else np.array([])
+            V = V[:n] if len(V) else np.array([])
+            if t.size == 0:
+                continue
+            m_t = ~np.isnan(t)
+            t = t[m_t]
+            if t.size == 0:
+                continue
+            # Peak constant current length
+            if I.size:
+                I = I[m_t[:I.size]] if I.size == m_t[:I.size].size else I
+                pcc_len = self._last_peak_length(I, t)
+            else:
+                pcc_len = np.nan
+            # Peak constant voltage length
+            if V.size:
+                V = V[m_t[:V.size]] if V.size == m_t[:V.size].size else V
+                pcv_len = self._last_peak_length(V, t)
+            else:
+                pcv_len = np.nan
+            # Complete cycle length
+            cyc_len = float(t[-1] - t[0]) if t.size > 0 else np.nan
+            xs.append(c.cycle_number)
+            pcc.append(pcc_len)
+            pcv.append(pcv_len)
+            cyc.append(cyc_len)
+        if len(xs) == 0:
+            return
+        order = np.argsort(np.array(xs))
+        xs_sorted = np.array(xs)[order]
+        pcc_sorted = np.array(pcc)[order]
+        pcv_sorted = np.array(pcv)[order]
+        cyc_sorted = np.array(cyc)[order]
+        # Plot PCC
+        plt.figure(figsize=(10, 6))
+        plt.plot(xs_sorted, pcc_sorted, marker='o', linewidth=1.5)
+        plt.xlabel('Cycle Number'); plt.ylabel('Peak Constant Current Length (s)')
+        plt.title(f'Peak Constant Current Length per Cycle - {battery.cell_id}')
+        plt.grid(True, alpha=0.3); plt.tight_layout(); plt.savefig(save_pcc, dpi=300, bbox_inches='tight'); plt.close()
+        # Plot PCV
+        plt.figure(figsize=(10, 6))
+        plt.plot(xs_sorted, pcv_sorted, marker='o', linewidth=1.5)
+        plt.xlabel('Cycle Number'); plt.ylabel('Peak Constant Voltage Length (s)')
+        plt.title(f'Peak Constant Voltage Length per Cycle - {battery.cell_id}')
+        plt.grid(True, alpha=0.3); plt.tight_layout(); plt.savefig(save_pcv, dpi=300, bbox_inches='tight'); plt.close()
+        # Plot cycle length
+        plt.figure(figsize=(10, 6))
+        plt.plot(xs_sorted, cyc_sorted, marker='o', linewidth=1.5)
+        plt.xlabel('Cycle Number'); plt.ylabel('Cycle Length (s)')
+        plt.title(f'Cycle Length per Cycle - {battery.cell_id}')
+        plt.grid(True, alpha=0.3); plt.tight_layout(); plt.savefig(save_cyc, dpi=300, bbox_inches='tight'); plt.close()
 
     def plot_avg_c_rate_vs_cycle(self, battery: BatteryData, save_path: Path):
         """Plot average |I|/C over each cycle (C-rate)."""

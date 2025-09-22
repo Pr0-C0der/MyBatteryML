@@ -105,7 +105,7 @@ class CorrelationAnalyzer:
                         available_features.append(feature_name)
 
         # Add new derived features to advertised list
-        for extra in ['avg_c_rate']:
+        for extra in ['avg_c_rate', 'peak_cc_length', 'peak_cv_length', 'cycle_length']:
             if extra not in available_features:
                 available_features.append(extra)
         
@@ -148,7 +148,9 @@ class CorrelationAnalyzer:
                 'tdlin': 'Tdlin',
                 # New derived features (computed below)
                 'avg_c_rate': 'avg_c_rate',
-                # removed: energy/power related derived metrics
+                'peak_cc_length': 'peak_cc_length',
+                'peak_cv_length': 'peak_cv_length',
+                'cycle_length': 'cycle_length',
             }
             
             for feature_name in self.features:
@@ -166,7 +168,48 @@ class CorrelationAnalyzer:
                             except Exception:
                                 row_data['avg_c_rate'] = np.nan
                             continue
-                        # removed: energy/power features
+                        if feature_name in ['peak_cc_length', 'peak_cv_length', 'cycle_length']:
+                            try:
+                                t = np.array(cycle_data.time_in_s or [])
+                                V = np.array(cycle_data.voltage_in_V or [])
+                                I = np.array(cycle_data.current_in_A or [])
+                                if t.size == 0:
+                                    raise ValueError
+                                # align and mask NaNs
+                                n = min(len(t), len(V)) if V.size else len(t)
+                                n = min(n, len(I)) if I.size else n
+                                t = t[:n]
+                                V = V[:n] if V.size else np.array([])
+                                I = I[:n] if I.size else np.array([])
+                                m_t = ~np.isnan(t)
+                                t = t[m_t]
+                                if V.size:
+                                    V = V[m_t]
+                                if I.size:
+                                    I = I[m_t]
+                                def last_peak_len(arr, tt):
+                                    if arr.size == 0:
+                                        return np.nan
+                                    vmax = np.nanmax(arr)
+                                    close = np.isclose(arr, vmax, rtol=1e-3, atol=1e-6)
+                                    if not np.any(close):
+                                        return np.nan
+                                    last_idx = np.where(close)[0][-1]
+                                    return float(tt[last_idx] - tt[0])
+                                if feature_name == 'peak_cc_length':
+                                    row_data['peak_cc_length'] = last_peak_len(I, t)
+                                elif feature_name == 'peak_cv_length':
+                                    row_data['peak_cv_length'] = last_peak_len(V, t)
+                                elif feature_name == 'cycle_length':
+                                    row_data['cycle_length'] = float(t[-1] - t[0]) if t.size > 0 else np.nan
+                            except Exception:
+                                if feature_name == 'peak_cc_length':
+                                    row_data['peak_cc_length'] = np.nan
+                                if feature_name == 'peak_cv_length':
+                                    row_data['peak_cv_length'] = np.nan
+                                if feature_name == 'cycle_length':
+                                    row_data['cycle_length'] = np.nan
+                            continue
 
                         # Original handling
                         if feature_data is None:
