@@ -38,10 +38,7 @@ class CyclePlotter:
         # Detect available features dynamically
         self.features = self._detect_available_features()
         
-        # Create subdirectories for different features
-        for feature in self.features:
-            feature_dir = self.output_dir / f"{feature}_vs_time"
-            feature_dir.mkdir(exist_ok=True)
+		# Do not pre-create per-feature directories; create them only when a valid plot is saved
     
     def load_battery_data(self, file_path: Path) -> Optional[BatteryData]:
         """Load a single battery data file."""
@@ -130,8 +127,8 @@ class CyclePlotter:
         
         return selected_cycles
     
-    def plot_feature_vs_time(self, battery: BatteryData, feature_name: str, save_path: Path):
-        """Generic method to plot any feature vs time for selected cycles."""
+    def plot_feature_vs_time(self, battery: BatteryData, feature_name: str, save_path: Path) -> bool:
+        """Generic method to plot any feature vs time for selected cycles. Returns True if saved."""
         selected_cycles = self.select_cycles(len(battery.cycle_data))
         
         # Do not plot scalar (per-cycle) features against time
@@ -159,13 +156,14 @@ class CyclePlotter:
         
         if feature_name not in feature_mapping:
             print(f"Warning: Unknown feature '{feature_name}'")
-            return
+            return False
         
         attr_name, ylabel = feature_mapping[feature_name]
 
         plt.figure(figsize=(12, 8))
         # Use a color gradient from blue (early cycles) to red (late cycles)
         colors = plt.cm.RdYlBu_r(np.linspace(0, 1, len(selected_cycles)))
+        any_plotted = False
 
         for i, cycle_idx in enumerate(selected_cycles):
             if cycle_idx < len(battery.cycle_data):
@@ -192,10 +190,15 @@ class CyclePlotter:
                                 plt.plot(relative_time, feature_values[valid_mask],
                                          color=colors[i], linewidth=1.5, alpha=0.8,
                                          label=f'Cycle {cycle_data.cycle_number}')
+                                any_plotted = True
                     except Exception:
                         # Skip plotting this cycle/feature on conversion issues
                         pass
         
+        if not any_plotted:
+            plt.close()
+            return False
+
         plt.xlabel('Relative Time (s)', fontsize=12)
         plt.ylabel(ylabel, fontsize=12)
         plt.title(f'{feature_name.title()} vs Relative Time - {battery.cell_id}', fontsize=14)
@@ -211,8 +214,10 @@ class CyclePlotter:
         if labels:
             plt.legend(bbox_to_anchor=(1.15, 1), loc='upper left')
         plt.tight_layout()
+        Path(save_path).parent.mkdir(parents=True, exist_ok=True)
         plt.savefig(save_path, dpi=300, bbox_inches='tight')
         plt.close()
+        return True
 
     def _is_scalar_feature(self, battery: BatteryData, feature_name: str) -> bool:
         """Return True only for known per-cycle scalar features to avoid misclassification."""
@@ -229,8 +234,8 @@ class CyclePlotter:
         }
         return feature_name in derived_scalar
 
-    def plot_feature_vs_cycle(self, battery: BatteryData, feature_name: str, save_path: Path):
-        """Plot scalar feature values against cycle number."""
+    def plot_feature_vs_cycle(self, battery: BatteryData, feature_name: str, save_path: Path) -> bool:
+        """Plot scalar feature values against cycle number. Returns True if saved."""
         feature_mapping = {
             'voltage': 'voltage_in_V',
             'current': 'current_in_A',
@@ -250,7 +255,7 @@ class CyclePlotter:
         }
         attr_name = feature_mapping.get(feature_name)
         if attr_name is None:
-            return
+            return False
 
         xs, ys = [], []
         for c in battery.cycle_data:
@@ -346,7 +351,7 @@ class CyclePlotter:
                     continue
 
         if len(xs) == 0:
-            return
+            return False
 
         plt.figure(figsize=(10, 6))
         order = np.argsort(np.array(xs))
@@ -355,7 +360,7 @@ class CyclePlotter:
         finite_mask = np.isfinite(xs_sorted) & np.isfinite(ys_sorted)
         if not np.any(finite_mask):
             plt.close()
-            return
+            return False
         xs_sorted = xs_sorted[finite_mask]
         ys_sorted = ys_sorted[finite_mask]
         plt.plot(xs_sorted, ys_sorted, marker='o', linewidth=1.5, alpha=0.9)
@@ -364,8 +369,10 @@ class CyclePlotter:
         plt.title(f'{feature_name.title()} vs Cycle Number - {battery.cell_id}', fontsize=14)
         plt.grid(True, alpha=0.3)
         plt.tight_layout()
+        Path(save_path).parent.mkdir(parents=True, exist_ok=True)
         plt.savefig(save_path, dpi=300, bbox_inches='tight')
         plt.close()
+        return True
     
     
     def plot_battery_features(self, battery: BatteryData):
@@ -375,16 +382,11 @@ class CyclePlotter:
         try:
             # Plot all detected features exactly once: scalar -> vs cycle, time-series -> vs time
             for feature in self.features:
-                # Derived scalar features will be handled explicitly as scalar
                 if self._is_scalar_feature(battery, feature):
-                    feature_dir = self.output_dir / f"{feature}_vs_cycle"
-                    feature_dir.mkdir(exist_ok=True)
-                    save_path = feature_dir / f"{cell_id}_{feature}_cycle.png"
+                    save_path = self.output_dir / f"{feature}_vs_cycle" / f"{cell_id}_{feature}_cycle.png"
                     self.plot_feature_vs_cycle(battery, feature, save_path)
                 else:
-                    feature_dir = self.output_dir / f"{feature}_vs_time"
-                    feature_dir.mkdir(exist_ok=True)
-                    save_path = feature_dir / f"{cell_id}_{feature}_time.png"
+                    save_path = self.output_dir / f"{feature}_vs_time" / f"{cell_id}_{feature}_time.png"
                     self.plot_feature_vs_time(battery, feature, save_path)
 
             # Derived analysis: Average C-rate per cycle
