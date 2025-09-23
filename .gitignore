@@ -5,6 +5,7 @@ data
 workspaces/
 experiments/
 **/cache/
+data_analysis_results/
 
 
 # Byte-compiled / optimized / DLL files

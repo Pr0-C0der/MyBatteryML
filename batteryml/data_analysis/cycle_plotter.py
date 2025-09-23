@@ -79,23 +79,13 @@ class CyclePlotter:
             'discharge_capacity_in_Ah': 'capacity',
             'charge_capacity_in_Ah': 'charge_capacity',
             'temperature_in_C': 'temperature',
-            'internal_resistance_in_ohm': 'internal_resistance',
-            'energy_charge': 'energy_charge',
-            'energy_discharge': 'energy_discharge',
-            'Qdlin': 'qdlin',
-            'Tdlin': 'tdlin'
+            'internal_resistance_in_ohm': 'internal_resistance'
         }
         
         for attr, feature_name in feature_mapping.items():
-            attr_value = None
-            if hasattr(first_cycle, attr):
-                attr_value = getattr(first_cycle, attr)
-            else:
-                # Fallback: additional_data may store MATR extras (e.g., Qdlin, Tdlin)
-                if hasattr(first_cycle, 'additional_data') and attr in getattr(first_cycle, 'additional_data', {}):
-                    attr_value = first_cycle.additional_data.get(attr)
-            if attr_value is None:
+            if not hasattr(first_cycle, attr):
                 continue
+            attr_value = getattr(first_cycle, attr)
             # Consider scalars as available; for sequences require non-empty
             if isinstance(attr_value, (int, float)):
                 available_features.append(feature_name)
@@ -111,6 +101,12 @@ class CyclePlotter:
         for feature in basic_features:
             if feature in available_features and feature not in available_features:
                 available_features.insert(0, feature)
+        
+        # Add derived features
+        derived_features = ['avg_c_rate', 'peak_cc_length', 'peak_cv_length', 'cycle_length', 'max_temperature', 'max_discharge_capacity', 'max_charge_capacity', 'charge_cycle_length', 'discharge_cycle_length']
+        for feature in derived_features:
+            if feature not in available_features:
+                available_features.append(feature)
         
         return available_features
     
@@ -138,9 +134,9 @@ class CyclePlotter:
         """Generic method to plot any feature vs time for selected cycles."""
         selected_cycles = self.select_cycles(len(battery.cycle_data))
         
-        plt.figure(figsize=(12, 8))
-        # Use a color gradient from blue (early cycles) to red (late cycles)
-        colors = plt.cm.RdYlBu_r(np.linspace(0, 1, len(selected_cycles)))
+        # Do not plot scalar (per-cycle) features against time
+        if self._is_scalar_feature(battery, feature_name):
+            return
         
         # Map feature names to CycleData attributes
         feature_mapping = {
@@ -150,10 +146,15 @@ class CyclePlotter:
             'charge_capacity': ('charge_capacity_in_Ah', 'Charge Capacity (Ah)'),
             'temperature': ('temperature_in_C', 'Temperature (°C)'),
             'internal_resistance': ('internal_resistance_in_ohm', 'Internal Resistance (Ω)'),
-            'energy_charge': ('energy_charge', 'Charge Energy (Wh)'),
-            'energy_discharge': ('energy_discharge', 'Discharge Energy (Wh)'),
-            'qdlin': ('Qdlin', 'Qdlin (Ah)'),
-            'tdlin': ('Tdlin', 'Tdlin (°C)')
+            'avg_c_rate': ('avg_c_rate', 'Average C-rate'),
+            'peak_cc_length': ('peak_cc_length', 'Peak CC Length (s)'),
+            'peak_cv_length': ('peak_cv_length', 'Peak CV Length (s)'),
+            'cycle_length': ('cycle_length', 'Cycle Length (s)'),
+            'max_temperature': ('max_temperature', 'Max Temperature (°C)'),
+            'max_discharge_capacity': ('max_discharge_capacity', 'Max Discharge Capacity (Ah)'),
+            'max_charge_capacity': ('max_charge_capacity', 'Max Charge Capacity (Ah)'),
+            'charge_cycle_length': ('charge_cycle_length', 'Charge Cycle Length (s)'),
+            'discharge_cycle_length': ('discharge_cycle_length', 'Discharge Cycle Length (s)')
         }
         
         if feature_name not in feature_mapping:
@@ -161,18 +162,21 @@ class CyclePlotter:
             return
         
         attr_name, ylabel = feature_mapping[feature_name]
-        
+
+        plt.figure(figsize=(12, 8))
+        # Use a color gradient from blue (early cycles) to red (late cycles)
+        colors = plt.cm.RdYlBu_r(np.linspace(0, 1, len(selected_cycles)))
+
         for i, cycle_idx in enumerate(selected_cycles):
             if cycle_idx < len(battery.cycle_data):
                 cycle_data = battery.cycle_data[cycle_idx]
-                # Always get time first
-                time_data = cycle_data.time_in_s
-                # Resolve feature data from attribute or additional_data
-                feature_data = None
+                
                 if hasattr(cycle_data, attr_name):
                     feature_data = getattr(cycle_data, attr_name)
-                elif hasattr(cycle_data, 'additional_data') and attr_name in getattr(cycle_data, 'additional_data', {}):
-                    feature_data = cycle_data.additional_data.get(attr_name)
+                else:
+                    feature_data = None
+                
+                time_data = cycle_data.time_in_s
                 # Only plot if both series data exist and are non-empty arrays
                 if feature_data is not None and time_data is not None:
                     try:
@@ -203,43 +207,27 @@ class CyclePlotter:
         cbar = plt.colorbar(sm, ax=plt.gca(), shrink=0.8)
         cbar.set_label('Cycle Index', fontsize=10)
         
-        plt.legend(bbox_to_anchor=(1.15, 1), loc='upper left')
+        handles, labels = plt.gca().get_legend_handles_labels()
+        if labels:
+            plt.legend(bbox_to_anchor=(1.15, 1), loc='upper left')
         plt.tight_layout()
         plt.savefig(save_path, dpi=300, bbox_inches='tight')
         plt.close()
 
     def _is_scalar_feature(self, battery: BatteryData, feature_name: str) -> bool:
-        """Heuristically determine if a feature is scalar per cycle (no time dimension)."""
-        feature_mapping = {
-            'voltage': 'voltage_in_V',
-            'current': 'current_in_A',
-            'capacity': 'discharge_capacity_in_Ah',
-            'charge_capacity': 'charge_capacity_in_Ah',
-            'temperature': 'temperature_in_C',
-            'internal_resistance': 'internal_resistance_in_ohm',
-            'energy_charge': 'energy_charge',
-            'energy_discharge': 'energy_discharge',
-            'qdlin': 'Qdlin',
-            'tdlin': 'Tdlin'
+        """Return True only for known per-cycle scalar features to avoid misclassification."""
+        derived_scalar = {
+            'avg_c_rate',
+            'peak_cc_length',
+            'peak_cv_length',
+            'cycle_length',
+            'max_temperature',
+            'max_discharge_capacity',
+            'max_charge_capacity',
+            'charge_cycle_length',
+            'discharge_cycle_length'
         }
-        attr_name = feature_mapping.get(feature_name)
-        if attr_name is None:
-            return False
-        for cycle_data in battery.cycle_data:
-            if hasattr(cycle_data, attr_name):
-                val = getattr(cycle_data, attr_name)
-                if val is None:
-                    continue
-                # numpy scalar or python number indicates scalar feature
-                if np.isscalar(val):
-                    return True
-                # If it's a sequence-like, it's not scalar
-                try:
-                    _ = len(val)
-                    return False
-                except TypeError:
-                    return True
-        return False
+        return feature_name in derived_scalar
 
     def plot_feature_vs_cycle(self, battery: BatteryData, feature_name: str, save_path: Path):
         """Plot scalar feature values against cycle number."""
@@ -253,7 +241,12 @@ class CyclePlotter:
             'energy_charge': 'energy_charge',
             'energy_discharge': 'energy_discharge',
             'qdlin': 'Qdlin',
-            'tdlin': 'Tdlin'
+            'tdlin': 'Tdlin',
+            'max_temperature': 'max_temperature',
+            'max_discharge_capacity': 'max_discharge_capacity',
+            'max_charge_capacity': 'max_charge_capacity',
+            'charge_cycle_length': 'charge_cycle_length',
+            'discharge_cycle_length': 'discharge_cycle_length'
         }
         attr_name = feature_mapping.get(feature_name)
         if attr_name is None:
@@ -261,7 +254,85 @@ class CyclePlotter:
 
         xs, ys = [], []
         for c in battery.cycle_data:
-            if hasattr(c, attr_name):
+            if feature_name == 'max_temperature':
+                # Special handling for max_temperature - compute from temperature_in_C
+                if hasattr(c, 'temperature_in_C') and c.temperature_in_C is not None:
+                    try:
+                        temp_data = np.array(c.temperature_in_C)
+                        if temp_data.size > 0:
+                            max_temp = np.nanmax(temp_data)
+                            if not np.isnan(max_temp):
+                                xs.append(c.cycle_number)
+                                ys.append(float(max_temp))
+                    except Exception:
+                        continue
+            elif feature_name == 'max_discharge_capacity':
+                # Special handling for max_discharge_capacity - compute from discharge_capacity_in_Ah
+                if hasattr(c, 'discharge_capacity_in_Ah') and c.discharge_capacity_in_Ah is not None:
+                    try:
+                        cap_data = np.array(c.discharge_capacity_in_Ah)
+                        if cap_data.size > 0:
+                            max_cap = np.nanmax(cap_data)
+                            if not np.isnan(max_cap):
+                                xs.append(c.cycle_number)
+                                ys.append(float(max_cap))
+                    except Exception:
+                        continue
+            elif feature_name == 'max_charge_capacity':
+                # Special handling for max_charge_capacity - compute from charge_capacity_in_Ah
+                if hasattr(c, 'charge_capacity_in_Ah') and c.charge_capacity_in_Ah is not None:
+                    try:
+                        cap_data = np.array(c.charge_capacity_in_Ah)
+                        if cap_data.size > 0:
+                            max_cap = np.nanmax(cap_data)
+                            if not np.isnan(max_cap):
+                                xs.append(c.cycle_number)
+                                ys.append(float(max_cap))
+                    except Exception:
+                        continue
+            elif feature_name in ['charge_cycle_length', 'discharge_cycle_length']:
+                # New definition based on first occurrence of most negative current
+                if hasattr(c, 'current_in_A') and hasattr(c, 'time_in_s') and c.current_in_A is not None and c.time_in_s is not None:
+                    try:
+                        current_data = np.array(c.current_in_A)
+                        time_data = np.array(c.time_in_s)
+                        if current_data.size == 0 or time_data.size == 0:
+                            continue
+                        # Align lengths
+                        n = min(len(current_data), len(time_data))
+                        current_data = current_data[:n]
+                        time_data = time_data[:n]
+                        # Mask finite values only
+                        mask = np.isfinite(current_data) & np.isfinite(time_data)
+                        if not np.any(mask):
+                            continue
+                        current_data = current_data[mask]
+                        time_data = time_data[mask]
+                        if current_data.size < 1 or time_data.size < 1:
+                            continue
+                        # Find first occurrence of the most negative current
+                        min_val = np.min(current_data)
+                        min_indices = np.where(current_data == min_val)[0]
+                        if min_indices.size == 0:
+                            continue
+                        first_min_idx = int(min_indices[0])
+                        # Compute lengths per new definition
+                        if feature_name == 'charge_cycle_length':
+                            length_val = time_data[first_min_idx] - time_data[0]
+                        else:  # discharge_cycle_length
+                            length_val = time_data[-1] - time_data[first_min_idx]
+                        # Append only finite, non-negative values
+                        if np.isfinite(length_val):
+                            try:
+                                valf = float(length_val)
+                                if np.isfinite(valf) and valf >= 0:
+                                    xs.append(c.cycle_number)
+                                    ys.append(valf)
+                            except Exception:
+                                pass
+                    except Exception:
+                        continue
+            elif hasattr(c, attr_name):
                 val = getattr(c, attr_name)
                 if val is None:
                     continue
@@ -279,8 +350,14 @@ class CyclePlotter:
 
         plt.figure(figsize=(10, 6))
         order = np.argsort(np.array(xs))
-        xs_sorted = np.array(xs)[order]
-        ys_sorted = np.array(ys)[order]
+        xs_sorted = np.array(xs, dtype=float)[order]
+        ys_sorted = np.array(ys, dtype=float)[order]
+        finite_mask = np.isfinite(xs_sorted) & np.isfinite(ys_sorted)
+        if not np.any(finite_mask):
+            plt.close()
+            return
+        xs_sorted = xs_sorted[finite_mask]
+        ys_sorted = ys_sorted[finite_mask]
         plt.plot(xs_sorted, ys_sorted, marker='o', linewidth=1.5, alpha=0.9)
         plt.xlabel('Cycle Number', fontsize=12)
         plt.ylabel(feature_name.replace('_', ' ').title(), fontsize=12)
@@ -296,8 +373,9 @@ class CyclePlotter:
         cell_id = battery.cell_id.replace('/', '_').replace('\\', '_')  # Safe filename
         
         try:
-            # Plot all detected features
+            # Plot all detected features exactly once: scalar -> vs cycle, time-series -> vs time
             for feature in self.features:
+                # Derived scalar features will be handled explicitly as scalar
                 if self._is_scalar_feature(battery, feature):
                     feature_dir = self.output_dir / f"{feature}_vs_cycle"
                     feature_dir.mkdir(exist_ok=True)
