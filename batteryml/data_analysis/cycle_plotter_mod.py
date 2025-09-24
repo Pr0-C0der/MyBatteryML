@@ -12,6 +12,22 @@ from pathlib import Path
 from typing import Callable, List, Optional, Tuple, Dict
 
 from batteryml.data.battery_data import BatteryData
+from batteryml.data_analysis.cycle_features import (
+    avg_c_rate,
+    max_temperature,
+    max_discharge_capacity,
+    max_charge_capacity,
+    charge_cycle_length,
+    discharge_cycle_length,
+    peak_cc_length,
+    peak_cv_length,
+    cycle_length,
+    power_during_charge_cycle,
+    power_during_discharge_cycle,
+    avg_charge_c_rate,
+    avg_discharge_c_rate,
+    charge_to_discharge_time_ratio,
+)
 
 
 # -----------------------------
@@ -277,144 +293,46 @@ def register_default_time_features(plotter: ModularCyclePlotter):
 
     attr_time('voltage', 'voltage_in_V', 'Voltage (V)')
     attr_time('current', 'current_in_A', 'Current (A)')
-    attr_time('capacity', 'discharge_capacity_in_Ah', 'Discharge Capacity (Ah)')
+    attr_time('discharge_capacity', 'discharge_capacity_in_Ah', 'Discharge Capacity (Ah)')
     attr_time('charge_capacity', 'charge_capacity_in_Ah', 'Charge Capacity (Ah)')
     attr_time('temperature', 'temperature_in_C', 'Temperature (°C)')
 
 
 def register_default_cycle_features(plotter: ModularCyclePlotter):
-    # avg_c_rate
-    def avg_c_rate(b: BatteryData, c) -> Optional[float]:
-        I = getattr(c, 'current_in_A', None)
-        C = b.nominal_capacity_in_Ah or 0.0
-        if I is None or not C:
-            return None
-        I = np.array(I)
-        I = I[np.isfinite(I)]
-        if I.size == 0:
-            return None
-        return float(np.mean(np.abs(I)) / C)
+    # Generic mean-of-attribute helper
+    def mean_attr(attr: str) -> Callable[[BatteryData, object], Optional[float]]:
+        def _fn(b: BatteryData, c) -> Optional[float]:
+            vals = getattr(c, attr, None)
+            if vals is None:
+                return None
+            try:
+                arr = np.array(vals)
+                arr = arr[np.isfinite(arr)]
+                if arr.size == 0:
+                    return None
+                return float(np.mean(arr))
+            except Exception:
+                return None
+        return _fn
 
-    # max_temperature
-    def max_temperature(b: BatteryData, c) -> Optional[float]:
-        T = getattr(c, 'temperature_in_C', None)
-        if T is None:
-            return None
-        T = np.array(T)
-        T = T[np.isfinite(T)]
-        if T.size == 0:
-            return None
-        m = np.nanmax(T)
-        return float(m) if np.isfinite(m) else None
+    # Averages of key time-series as per-cycle scalars
+    plotter.register_cycle_feature(CycleFeatureSpec(
+        'avg_voltage', mean_attr('voltage_in_V'), depends_on=['voltage_in_V'], ylabel='Average Voltage (V)'
+    ))
+    plotter.register_cycle_feature(CycleFeatureSpec(
+        'avg_current', mean_attr('current_in_A'), depends_on=['current_in_A'], ylabel='Average Current (A)'
+    ))
+    plotter.register_cycle_feature(CycleFeatureSpec(
+        'avg_charge_capacity', mean_attr('charge_capacity_in_Ah'), depends_on=['charge_capacity_in_Ah'], ylabel='Average Charge Capacity (Ah)'
+    ))
+    plotter.register_cycle_feature(CycleFeatureSpec(
+        'avg_discharge_capacity', mean_attr('discharge_capacity_in_Ah'), depends_on=['discharge_capacity_in_Ah'], ylabel='Average Discharge Capacity (Ah)'
+    ))
+    plotter.register_cycle_feature(CycleFeatureSpec(
+        'avg_temperature', mean_attr('temperature_in_C'), depends_on=['temperature_in_C'], ylabel='Average Temperature (°C)'
+    ))
 
-    # max capacities
-    def max_discharge_capacity(b: BatteryData, c) -> Optional[float]:
-        Qd = getattr(c, 'discharge_capacity_in_Ah', None)
-        if Qd is None:
-            return None
-        Qd = np.array(Qd)
-        Qd = Qd[np.isfinite(Qd)]
-        if Qd.size == 0:
-            return None
-        m = np.nanmax(Qd)
-        return float(m) if np.isfinite(m) else None
-
-    def max_charge_capacity(b: BatteryData, c) -> Optional[float]:
-        Qc = getattr(c, 'charge_capacity_in_Ah', None)
-        if Qc is None:
-            return None
-        Qc = np.array(Qc)
-        Qc = Qc[np.isfinite(Qc)]
-        if Qc.size == 0:
-            return None
-        m = np.nanmax(Qc)
-        return float(m) if np.isfinite(m) else None
-
-    # charge/discharge cycle length based on first occurrence of most negative current
-    def charge_cycle_length(b: BatteryData, c) -> Optional[float]:
-        I = getattr(c, 'current_in_A', None)
-        t = getattr(c, 'time_in_s', None)
-        if I is None or t is None:
-            return None
-        I = np.array(I); t = np.array(t)
-        n = min(len(I), len(t))
-        I = I[:n]; t = t[:n]
-        m = np.isfinite(I) & np.isfinite(t)
-        if not np.any(m):
-            return None
-        I = I[m]; t = t[m]
-        if I.size == 0 or t.size == 0:
-            return None
-        idx = int(np.where(I == np.min(I))[0][0]) if I.size else 0
-        val = t[idx] - t[0]
-        return float(val) if np.isfinite(val) and val >= 0 else None
-
-    def discharge_cycle_length(b: BatteryData, c) -> Optional[float]:
-        I = getattr(c, 'current_in_A', None)
-        t = getattr(c, 'time_in_s', None)
-        if I is None or t is None:
-            return None
-        I = np.array(I); t = np.array(t)
-        n = min(len(I), len(t))
-        I = I[:n]; t = t[:n]
-        m = np.isfinite(I) & np.isfinite(t)
-        if not np.any(m):
-            return None
-        I = I[m]; t = t[m]
-        if I.size == 0 or t.size == 0:
-            return None
-        idx = int(np.where(I == np.min(I))[0][0]) if I.size else 0
-        val = t[-1] - t[idx]
-        return float(val) if np.isfinite(val) and val >= 0 else None
-
-    # peak lengths and cycle length
-    def _last_peak_length(arr: np.ndarray, tt: np.ndarray) -> Optional[float]:
-        if arr.size == 0 or tt.size == 0:
-            return None
-        vmax = np.nanmax(arr)
-        close = np.isclose(arr, vmax, rtol=1e-3, atol=1e-6)
-        if not np.any(close):
-            return None
-        last_idx = np.where(close)[0][-1]
-        val = float(tt[last_idx] - tt[0])
-        return val if np.isfinite(val) and val >= 0 else None
-
-    def peak_cc_length(b: BatteryData, c) -> Optional[float]:
-        I = getattr(c, 'current_in_A', None)
-        t = getattr(c, 'time_in_s', None)
-        if I is None or t is None:
-            return None
-        I = np.array(I); t = np.array(t)
-        n = min(len(I), len(t))
-        I = I[:n]; t = t[:n]
-        m = np.isfinite(I) & np.isfinite(t)
-        if not np.any(m):
-            return None
-        return _last_peak_length(I[m], t[m])
-
-    def peak_cv_length(b: BatteryData, c) -> Optional[float]:
-        V = getattr(c, 'voltage_in_V', None)
-        t = getattr(c, 'time_in_s', None)
-        if V is None or t is None:
-            return None
-        V = np.array(V); t = np.array(t)
-        n = min(len(V), len(t))
-        V = V[:n]; t = t[:n]
-        m = np.isfinite(V) & np.isfinite(t)
-        if not np.any(m):
-            return None
-        return _last_peak_length(V[m], t[m])
-
-    def cycle_length(b: BatteryData, c) -> Optional[float]:
-        t = getattr(c, 'time_in_s', None)
-        if t is None:
-            return None
-        t = np.array(t)
-        t = t[np.isfinite(t)]
-        if t.size == 0:
-            return None
-        val = float(t[-1] - t[0])
-        return val if np.isfinite(val) and val >= 0 else None
+    # Derived features imported from shared module
 
     plotter.register_cycle_feature(CycleFeatureSpec('avg_c_rate', avg_c_rate, depends_on=['current_in_A'], ylabel='Average C-rate (|I|/C_nom)'))
     plotter.register_cycle_feature(CycleFeatureSpec('max_temperature', max_temperature, depends_on=['temperature_in_C'], ylabel='Max Temperature (°C)'))
@@ -425,6 +343,13 @@ def register_default_cycle_features(plotter: ModularCyclePlotter):
     plotter.register_cycle_feature(CycleFeatureSpec('peak_cc_length', peak_cc_length, depends_on=['current_in_A', 'time_in_s'], ylabel='Peak Constant Current Length (s)'))
     plotter.register_cycle_feature(CycleFeatureSpec('peak_cv_length', peak_cv_length, depends_on=['voltage_in_V', 'time_in_s'], ylabel='Peak Constant Voltage Length (s)'))
     plotter.register_cycle_feature(CycleFeatureSpec('cycle_length', cycle_length, depends_on=['time_in_s'], ylabel='Cycle Length (s)'))
+
+    # New power and C-rate features
+    plotter.register_cycle_feature(CycleFeatureSpec('power_during_charge_cycle', power_during_charge_cycle, depends_on=['voltage_in_V', 'current_in_A', 'time_in_s'], ylabel='Energy during Charge (W·s)'))
+    plotter.register_cycle_feature(CycleFeatureSpec('power_during_discharge_cycle', power_during_discharge_cycle, depends_on=['voltage_in_V', 'current_in_A', 'time_in_s'], ylabel='Energy during Discharge (W·s)'))
+    plotter.register_cycle_feature(CycleFeatureSpec('avg_charge_c_rate', avg_charge_c_rate, depends_on=['current_in_A', 'time_in_s'], ylabel='Avg C-rate (charge)'))
+    plotter.register_cycle_feature(CycleFeatureSpec('avg_discharge_c_rate', avg_discharge_c_rate, depends_on=['current_in_A', 'time_in_s'], ylabel='Avg C-rate (discharge)'))
+    plotter.register_cycle_feature(CycleFeatureSpec('charge_to_discharge_time_ratio', charge_to_discharge_time_ratio, depends_on=['current_in_A', 'time_in_s'], ylabel='Charge/Discharge Time Ratio'))
 
 
 def build_default_plotter(data_path: str, output_dir: str = "cycle_plots_mod", cycle_gap: int = 100, verbose: bool = False) -> ModularCyclePlotter:
