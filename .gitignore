@@ -37,3 +37,10 @@ MANIFEST
 # Hypothesis and Venv
 .hypothesis/
 .venv/
+
+
+# Graph Folders
+./cycle_plots_mod
+./correlation_analysis_mod/
+correlation_analysis_mod/
+cycle_plots_mod/
