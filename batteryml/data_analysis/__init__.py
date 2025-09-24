@@ -1,18 +1,15 @@
 # Licensed under the MIT License.
 # Copyright (c) Microsoft Corporation.
 
-from .base_analyzer import BaseDataAnalyzer
-from .analyze_calce import CALCEAnalyzer
-from .analyze_matr import MATRAnalyzer
-from .combined_plots import CombinedPlotGenerator
-from .cycle_plotter import CyclePlotter
-from .correlation_analyzer import CorrelationAnalyzer
+from .cycle_plotter_mod import ModularCyclePlotter, build_default_plotter
+from .correlation_mod import ModularCorrelationAnalyzer, build_default_analyzer
+from .misc_plots import plot_voltage_current_twin, plot_first_last_overlay
 
 __all__ = [
-    'BaseDataAnalyzer',
-    'CALCEAnalyzer',
-    'MATRAnalyzer',
-    'CombinedPlotGenerator',
-    'CyclePlotter',
-    'CorrelationAnalyzer'
+    'ModularCyclePlotter',
+    'build_default_plotter',
+    'ModularCorrelationAnalyzer',
+    'build_default_analyzer',
+    'plot_voltage_current_twin',
+    'plot_first_last_overlay'
 ]
