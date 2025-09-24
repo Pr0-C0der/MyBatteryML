@@ -1,0 +1,1 @@
+python -m batteryml.training.train_rul_baselines --dataset MATR --data_path data/processed/MATR --output_dir rul_baselines
