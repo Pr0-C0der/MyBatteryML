@@ -17,7 +17,6 @@ from sklearn.cross_decomposition import PLSRegression
 from sklearn.decomposition import PCA
 from sklearn.svm import SVR
 from sklearn.ensemble import RandomForestRegressor
-from sklearn.gaussian_process import GaussianProcessRegressor
 from sklearn.neural_network import MLPRegressor
 
 try:
@@ -162,7 +161,7 @@ def _build_models(use_gpu: bool = False) -> Dict[str, Pipeline]:
         # Kernel
         models['svr_rbf'] = Pipeline(base_steps + [('model', cuSVR(kernel='rbf', C=10.0))])
         # Trees
-        models['random_forest'] = Pipeline(base_steps + [('model', cuRF(n_estimators=400, random_state=42))])
+        models['random_forest'] = Pipeline(base_steps + [('model', cuRF(n_estimators=40, random_state=42))])
     else:
         # Linear models (CPU)
         models['linear_regression'] = Pipeline(base_steps + [('model', LinearRegression())])
@@ -171,10 +170,8 @@ def _build_models(use_gpu: bool = False) -> Dict[str, Pipeline]:
         # Kernel (CPU)
         models['svr_rbf'] = Pipeline(base_steps + [('model', SVR(kernel='rbf', C=10.0, gamma='scale'))])
         # Trees (CPU)
-        models['random_forest'] = Pipeline(base_steps + [('model', RandomForestRegressor(n_estimators=400, random_state=42, n_jobs=-1))])
+        models['random_forest'] = Pipeline(base_steps + [('model', RandomForestRegressor(n_estimators=40, random_state=42, n_jobs=-1))])
     # (GradientBoosting removed)
-    # Probabilistic
-    models['gaussian_process'] = Pipeline(base_steps + [('model', GaussianProcessRegressor())])
     # Shallow MLP
     models['mlp'] = Pipeline(base_steps + [('model', MLPRegressor(hidden_layer_sizes=(128, 64), activation='relu', batch_size=256, max_iter=300, random_state=42))])
     # XGBoost
