@@ -37,6 +37,7 @@ from batteryml.data_analysis.cycle_features import (
     power_during_charge_cycle,
     power_during_discharge_cycle,
 )
+from tqdm import tqdm
 
 
 def _build_voltage_current_analyzer(data_path: str, output_dir: str) -> ModularCorrelationAnalyzer:
@@ -60,9 +61,9 @@ def _load_feature_matrix(analyzer: ModularCorrelationAnalyzer, file_path: Path) 
     return df
 
 
-def _combine(files: List[Path], analyzer: ModularCorrelationAnalyzer) -> pd.DataFrame:
+def _combine(files: List[Path], analyzer: ModularCorrelationAnalyzer, desc: str) -> pd.DataFrame:
     frames: List[pd.DataFrame] = []
-    for f in files:
+    for f in tqdm(files, desc=desc):
         try:
             frames.append(_load_feature_matrix(analyzer, f))
         except Exception as e:
@@ -100,7 +101,7 @@ def _build_models(use_gpu: bool = False) -> Dict[str, Pipeline]:
     # Shallow MLP
     models['mlp'] = Pipeline(steps_base + [('model', MLPRegressor(hidden_layer_sizes=(128, 64), activation='relu', batch_size=256, max_iter=300, random_state=42))])
     if _HAS_XGB:
-        models['xgb'] = Pipeline(steps_base + [('model', XGBRegressor(n_estimators=800, max_depth=6, learning_rate=0.05, subsample=0.9, colsample_bytree=0.9, n_jobs=-1, random_state=42, tree_method=('gpu_hist' if use_gpu else 'hist'), predictor=('gpu_predictor' if use_gpu else 'auto')))])
+        models['xgb'] = Pipeline(steps_base + [('model', XGBRegressor(n_estimators=800, max_depth=6, learning_rate=0.05, subsample=0.9, colsample_bytree=0.9, n_jobs=-1, random_state=42, tree_method='hist', device=('cuda' if use_gpu else 'cpu')))])
     return models
 
 
@@ -117,8 +118,8 @@ def run(dataset: str, data_path: str, output_dir: str, use_gpu: bool = False):
         pass
 
     analyzer = _build_voltage_current_analyzer(data_path, str(out_dir / f"{dataset.upper()}_tmp"))
-    df_train = _combine(train_files, analyzer)
-    df_test = _combine(test_files, analyzer)
+    df_train = _combine(train_files, analyzer, desc='Building train matrices')
+    df_test = _combine(test_files, analyzer, desc='Building test matrices')
     if df_train.empty or df_test.empty:
         print("No data after feature extraction.")
         return

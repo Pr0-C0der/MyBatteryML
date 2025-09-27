@@ -133,7 +133,7 @@ def _build_models(use_gpu: bool = False) -> Dict[str, Pipeline]:
     models['linear_regression'] = Pipeline(base_steps + [('model', LinearRegression())])
     models['random_forest'] = Pipeline(base_steps + [('model', RandomForestRegressor(n_estimators=400, random_state=42, n_jobs=-1))])
     if _HAS_XGB:
-        models['xgboost'] = Pipeline(base_steps + [('model', XGBRegressor(n_estimators=600, max_depth=6, learning_rate=0.05, subsample=0.9, colsample_bytree=0.9, random_state=42, n_jobs=-1, tree_method=('gpu_hist' if use_gpu else 'hist'), predictor=('gpu_predictor' if use_gpu else 'auto')))])
+        models['xgboost'] = Pipeline(base_steps + [('model', XGBRegressor(n_estimators=600, max_depth=6, learning_rate=0.05, subsample=0.9, colsample_bytree=0.9, random_state=42, n_jobs=-1, tree_method='hist', device=('cuda' if use_gpu else 'cpu')))])
     return models
 
 

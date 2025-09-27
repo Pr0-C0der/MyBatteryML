@@ -112,8 +112,8 @@ def build_models(memory: Memory, seed: int = 42, use_gpu: bool = False) -> Dict[
                 colsample_bytree=0.9,
                 random_state=seed,
                 n_jobs=-1,
-                tree_method=('gpu_hist' if use_gpu else 'hist'),
-                predictor=('gpu_predictor' if use_gpu else 'auto')
+                tree_method='hist',
+                device=('cuda' if use_gpu else 'cpu')
             ))
         ], memory=memory)
     else:
