@@ -14,9 +14,10 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import mean_absolute_error, mean_squared_error
 
 from sklearn.linear_model import LinearRegression, Ridge, ElasticNet
+from sklearn.cross_decomposition import PLSRegression
+from sklearn.decomposition import PCA
 from sklearn.svm import SVR
-from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor
-from sklearn.neighbors import KNeighborsRegressor
+from sklearn.ensemble import RandomForestRegressor
 from sklearn.gaussian_process import GaussianProcessRegressor
 from sklearn.neural_network import MLPRegressor
 
@@ -25,6 +26,13 @@ try:
     _HAS_XGB = True
 except Exception:
     _HAS_XGB = False
+
+# Optional RAPIDS cuML
+try:
+    import cuml  # noqa: F401
+    _HAS_CUML = True
+except Exception:
+    _HAS_CUML = False
 
 from batteryml.data.battery_data import BatteryData
 from batteryml.training.train_rul_baselines import build_train_test_lists
@@ -89,19 +97,31 @@ def _evaluate(y_true: np.ndarray, y_pred: np.ndarray) -> Dict[str, float]:
 def _build_models(use_gpu: bool = False) -> Dict[str, Pipeline]:
     steps_base = [('imputer', SimpleImputer(strategy='median')), ('scaler', StandardScaler())]
     models: Dict[str, Pipeline] = {}
-    models['linear_regression'] = Pipeline(steps_base + [('model', LinearRegression())])
-    models['ridge'] = Pipeline(steps_base + [('model', Ridge(alpha=1.0))])
-    models['elastic_net'] = Pipeline(steps_base + [('model', ElasticNet(alpha=0.001, l1_ratio=0.5, max_iter=10000))])
-    models['svr_rbf'] = Pipeline(steps_base + [('model', SVR(kernel='rbf', C=10.0, gamma='scale'))])
-    models['random_forest'] = Pipeline(steps_base + [('model', RandomForestRegressor(n_estimators=500, random_state=42, n_jobs=-1))])
-    models['gbr'] = Pipeline(steps_base + [('model', GradientBoostingRegressor(random_state=42))])
-    models['knn'] = Pipeline(steps_base + [('model', KNeighborsRegressor(n_neighbors=7))])
+    if use_gpu and _HAS_CUML:
+        from cuml.linear_model import LinearRegression as cuLR, Ridge as cuRidge, ElasticNet as cuEN
+        from cuml.svm import SVR as cuSVR
+        from cuml.ensemble import RandomForestRegressor as cuRF
+        models['linear_regression'] = Pipeline(steps_base + [('model', cuLR())])
+        models['ridge'] = Pipeline(steps_base + [('model', cuRidge())])
+        models['elastic_net'] = Pipeline(steps_base + [('model', cuEN())])
+        models['svr_rbf'] = Pipeline(steps_base + [('model', cuSVR(kernel='rbf', C=10.0))])
+        models['random_forest'] = Pipeline(steps_base + [('model', cuRF(n_estimators=500, random_state=42))])
+    else:
+        models['linear_regression'] = Pipeline(steps_base + [('model', LinearRegression())])
+        models['ridge'] = Pipeline(steps_base + [('model', Ridge(alpha=1.0))])
+        models['elastic_net'] = Pipeline(steps_base + [('model', ElasticNet(alpha=0.001, l1_ratio=0.5, max_iter=10000))])
+        models['svr_rbf'] = Pipeline(steps_base + [('model', SVR(kernel='rbf', C=10.0, gamma='scale'))])
+        models['random_forest'] = Pipeline(steps_base + [('model', RandomForestRegressor(n_estimators=500, random_state=42, n_jobs=-1))])
     # Gaussian Process can be heavy; include but expect slower runtime
     models['gaussian_process'] = Pipeline(steps_base + [('model', GaussianProcessRegressor())])
     # Shallow MLP
     models['mlp'] = Pipeline(steps_base + [('model', MLPRegressor(hidden_layer_sizes=(128, 64), activation='relu', batch_size=256, max_iter=300, random_state=42))])
     if _HAS_XGB:
         models['xgb'] = Pipeline(steps_base + [('model', XGBRegressor(n_estimators=800, max_depth=6, learning_rate=0.05, subsample=0.9, colsample_bytree=0.9, n_jobs=-1, random_state=42, tree_method='hist', device=('cuda' if use_gpu else 'cpu')))])
+    # PLSR
+    models['plsr'] = Pipeline(steps_base + [('model', PLSRegression(n_components=10))])
+    # PCR (PCA + Linear)
+    models['pcr'] = Pipeline(steps_base + [('model', Pipeline([('pca', PCA(n_components=20)), ('lr', LinearRegression())]))])
     return models
 
 

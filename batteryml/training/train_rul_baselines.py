@@ -15,6 +15,8 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import mean_absolute_error, mean_squared_error
 from sklearn.model_selection import GroupKFold, GridSearchCV
 from sklearn.linear_model import LinearRegression
+from sklearn.cross_decomposition import PLSRegression
+from sklearn.decomposition import PCA
 from sklearn.ensemble import RandomForestRegressor
 from joblib import Memory
 
@@ -23,6 +25,13 @@ try:
     _HAS_XGB = True
 except Exception:
     _HAS_XGB = False
+
+# Optional RAPIDS cuML
+try:
+    import cuml  # noqa: F401
+    _HAS_CUML = True
+except Exception:
+    _HAS_CUML = False
 
 from batteryml.data.battery_data import BatteryData
 from batteryml.data_analysis.correlation_mod import (
@@ -110,16 +119,37 @@ def prepare_xy(df: pd.DataFrame) -> Tuple[np.ndarray, np.ndarray, List[str], np.
 def build_models(memory: Memory, seed: int = 42, use_gpu: bool = False) -> Dict[str, Pipeline]:
     models: Dict[str, Pipeline] = {}
     # Linear Regression: impute + scale + LR
-    models['linear_regression'] = Pipeline([
-        ('imputer', SimpleImputer(strategy='median')),
-        ('scaler', StandardScaler()),
-        ('model', LinearRegression())
-    ], memory=memory)
+    if use_gpu and _HAS_CUML:
+        from cuml.linear_model import LinearRegression as cuLR, Ridge as cuRidge, ElasticNet as cuEN
+        from cuml.svm import SVR as cuSVR
+        from cuml.ensemble import RandomForestRegressor as cuRF
+        models['linear_regression'] = Pipeline([
+            ('imputer', SimpleImputer(strategy='median')),
+            ('scaler', StandardScaler()),
+            ('model', cuLR())
+        ], memory=memory)
+        # Also add GPU RF and SVR under same flag
+        models['random_forest'] = Pipeline([
+            ('imputer', SimpleImputer(strategy='median')),
+            ('model', cuRF(n_estimators=400, random_state=seed))
+        ], memory=memory)
+        models['svr_rbf'] = Pipeline([
+            ('imputer', SimpleImputer(strategy='median')),
+            ('scaler', StandardScaler()),
+            ('model', cuSVR(kernel='rbf', C=10.0))
+        ], memory=memory)
+    else:
+        models['linear_regression'] = Pipeline([
+            ('imputer', SimpleImputer(strategy='median')),
+            ('scaler', StandardScaler()),
+            ('model', LinearRegression())
+        ], memory=memory)
     # Random Forest: impute + RF
-    models['random_forest'] = Pipeline([
-        ('imputer', SimpleImputer(strategy='median')),
-        ('model', RandomForestRegressor(n_estimators=400, random_state=seed, n_jobs=-1))
-    ], memory=memory)
+    if 'random_forest' not in models:
+        models['random_forest'] = Pipeline([
+            ('imputer', SimpleImputer(strategy='median')),
+            ('model', RandomForestRegressor(n_estimators=400, random_state=seed, n_jobs=-1))
+        ], memory=memory)
     # XGBoost (if available): impute + XGB
     if _HAS_XGB:
         models['xgboost'] = Pipeline([
@@ -138,6 +168,18 @@ def build_models(memory: Memory, seed: int = 42, use_gpu: bool = False) -> Dict[
         ], memory=memory)
     else:
         print("XGBoost not available; skipping.")
+    # PLSR
+    models['plsr'] = Pipeline([
+        ('imputer', SimpleImputer(strategy='median')),
+        ('scaler', StandardScaler()),
+        ('model', PLSRegression(n_components=10))
+    ], memory=memory)
+    # PCR (PCA + Linear)
+    models['pcr'] = Pipeline([
+        ('imputer', SimpleImputer(strategy='median')),
+        ('scaler', StandardScaler()),
+        ('model', Pipeline([('pca', PCA(n_components=20)), ('lr', LinearRegression())]))
+    ], memory=memory)
     return models
 
 

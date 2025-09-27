@@ -13,9 +13,10 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import mean_absolute_error, mean_squared_error
 
 from sklearn.linear_model import LinearRegression, Ridge, ElasticNet
+from sklearn.cross_decomposition import PLSRegression
+from sklearn.decomposition import PCA
 from sklearn.svm import SVR
-from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor
-from sklearn.neighbors import KNeighborsRegressor
+from sklearn.ensemble import RandomForestRegressor
 from sklearn.gaussian_process import GaussianProcessRegressor
 from sklearn.neural_network import MLPRegressor
 
@@ -24,6 +25,13 @@ try:
     _HAS_XGB = True
 except Exception:
     _HAS_XGB = False
+
+# Optional RAPIDS cuML (GPU) support
+try:
+    import cuml  # noqa: F401
+    _HAS_CUML = True
+except Exception:
+    _HAS_CUML = False
 
 from batteryml.data.battery_data import BatteryData
 from batteryml.label.rul import RULLabelAnnotator
@@ -134,16 +142,29 @@ def _prepare_dataset(files: List[Path], feature_fns: Dict[str, callable], featur
 def _build_models(use_gpu: bool = False) -> Dict[str, Pipeline]:
     models: Dict[str, Pipeline] = {}
     base_steps = [('imputer', SimpleImputer(strategy='median')), ('scaler', StandardScaler())]
-    # Linear models
-    models['linear_regression'] = Pipeline(base_steps + [('model', LinearRegression())])
-    models['ridge'] = Pipeline(base_steps + [('model', Ridge(alpha=1.0))])
-    models['elastic_net'] = Pipeline(base_steps + [('model', ElasticNet(alpha=0.001, l1_ratio=0.5, max_iter=10000))])
-    # Kernel / neighbors
-    models['svr_rbf'] = Pipeline(base_steps + [('model', SVR(kernel='rbf', C=10.0, gamma='scale'))])
-    models['knn'] = Pipeline(base_steps + [('model', KNeighborsRegressor(n_neighbors=7))])
-    # Tree ensembles
-    models['random_forest'] = Pipeline(base_steps + [('model', RandomForestRegressor(n_estimators=400, random_state=42, n_jobs=-1))])
-    models['gbr'] = Pipeline(base_steps + [('model', GradientBoostingRegressor(random_state=42))])
+    # Prefer cuML implementations when available and GPU requested
+    if use_gpu and _HAS_CUML:
+        from cuml.linear_model import LinearRegression as cuLinearRegression, Ridge as cuRidge, ElasticNet as cuElasticNet
+        from cuml.svm import SVR as cuSVR
+        from cuml.ensemble import RandomForestRegressor as cuRF
+        # Linear models (GPU)
+        models['linear_regression'] = Pipeline(base_steps + [('model', cuLinearRegression())])
+        models['ridge'] = Pipeline(base_steps + [('model', cuRidge())])
+        models['elastic_net'] = Pipeline(base_steps + [('model', cuElasticNet())])
+        # Kernel
+        models['svr_rbf'] = Pipeline(base_steps + [('model', cuSVR(kernel='rbf', C=10.0))])
+        # Trees
+        models['random_forest'] = Pipeline(base_steps + [('model', cuRF(n_estimators=400, random_state=42))])
+    else:
+        # Linear models (CPU)
+        models['linear_regression'] = Pipeline(base_steps + [('model', LinearRegression())])
+        models['ridge'] = Pipeline(base_steps + [('model', Ridge(alpha=1.0))])
+        models['elastic_net'] = Pipeline(base_steps + [('model', ElasticNet(alpha=0.001, l1_ratio=0.5, max_iter=10000))])
+        # Kernel (CPU)
+        models['svr_rbf'] = Pipeline(base_steps + [('model', SVR(kernel='rbf', C=10.0, gamma='scale'))])
+        # Trees (CPU)
+        models['random_forest'] = Pipeline(base_steps + [('model', RandomForestRegressor(n_estimators=400, random_state=42, n_jobs=-1))])
+    # (GradientBoosting removed)
     # Probabilistic
     models['gaussian_process'] = Pipeline(base_steps + [('model', GaussianProcessRegressor())])
     # Shallow MLP
@@ -151,6 +172,10 @@ def _build_models(use_gpu: bool = False) -> Dict[str, Pipeline]:
     # XGBoost
     if _HAS_XGB:
         models['xgboost'] = Pipeline(base_steps + [('model', XGBRegressor(n_estimators=600, max_depth=6, learning_rate=0.05, subsample=0.9, colsample_bytree=0.9, random_state=42, n_jobs=-1, tree_method='hist', device=('cuda' if use_gpu else 'cpu')))])
+    # PLSR
+    models['plsr'] = Pipeline(base_steps + [('model', PLSRegression(n_components=10))])
+    # PCR (PCA + Linear)
+    models['pcr'] = Pipeline(base_steps + [('model', Pipeline([('pca', PCA(n_components=20)), ('lr', LinearRegression())]))])
     return models
 
 

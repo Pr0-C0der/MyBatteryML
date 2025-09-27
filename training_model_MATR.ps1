@@ -6,3 +6,7 @@ python -m batteryml.training.train_rul_windows --dataset CALCE --data_path data/
 
 # Use all available features
 python -m batteryml.training.train_rul_windows --dataset MATR --data_path data/preprocessed/MATR --window_size 80 --features all
+
+
+
+python -m batteryml.training.train_rul_windows --dataset HUST --data_path data/preprocessed/HUST --output_dir rul_windows --window_size 100 --gpu
