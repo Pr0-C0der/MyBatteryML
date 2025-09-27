@@ -171,8 +171,8 @@ def peak_cc_length(b: BatteryData, c) -> Optional[float]:
 
     # Map to time from start of charge window
     t_len = float(tw[tC_idx] - tw[0])
-    print(f"Peak CC Length: {t_len}")
-    print(f"Time Window: {tw[tC_idx]}")
+    # print(f"Peak CC Length: {t_len}")
+    # print(f"Time Window: {tw[tC_idx]}")
     # print(f"Time Array: {t_arr[wnd]}")
     return t_len if np.isfinite(t_len) and t_len >= 0 else None
 

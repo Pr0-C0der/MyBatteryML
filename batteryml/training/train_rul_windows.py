@@ -31,7 +31,7 @@ def _available_feature_fns() -> Dict[str, callable]:
     # Expose a curated set of feature functions from cycle_features
     names = [
         'avg_c_rate', 'max_temperature', 'max_discharge_capacity', 'max_charge_capacity',
-        'charge_cycle_length', 'discharge_cycle_length', 'peak_cc_length', 'peak_cv_length',
+        'charge_cycle_length', 'discharge_cycle_length', 'peak_cv_length',
         'cycle_length', 'power_during_charge_cycle', 'power_during_discharge_cycle',
         'avg_charge_c_rate', 'avg_discharge_c_rate', 'charge_to_discharge_time_ratio'
     ]
@@ -47,7 +47,7 @@ def _default_feature_names() -> List[str]:
     # Reasonable default subset
     return [
         'avg_c_rate', 'max_discharge_capacity', 'max_charge_capacity',
-        'charge_cycle_length', 'discharge_cycle_length', 'peak_cc_length',
+        'charge_cycle_length', 'discharge_cycle_length',
         'cycle_length'
     ]
 
