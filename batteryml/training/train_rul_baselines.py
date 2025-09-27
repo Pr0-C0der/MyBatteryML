@@ -48,13 +48,12 @@ from batteryml.train_test_split.MIX100_split import MIX100TrainTestSplitter
 
 
 def build_train_test_lists(dataset: str, data_path: str | List[str], seed: int = 42) -> Tuple[List[Path], List[Path]]:
-    data_dir = Path(data_path)
     # Support multiple paths
     paths: List[str]
     if isinstance(data_path, list):
         paths = data_path
     else:
-        paths = [str(data_dir)]
+        paths = [str(Path(data_path))]
     if dataset.upper() == 'MATR':
         splitter = MATRPrimaryTestTrainTestSplitter(paths)
         train_files, test_files = splitter.split()
