@@ -47,29 +47,35 @@ from batteryml.train_test_split.SNL_split import SNLTrainTestSplitter
 from batteryml.train_test_split.MIX100_split import MIX100TrainTestSplitter
 
 
-def build_train_test_lists(dataset: str, data_path: str, seed: int = 42) -> Tuple[List[Path], List[Path]]:
+def build_train_test_lists(dataset: str, data_path: str | List[str], seed: int = 42) -> Tuple[List[Path], List[Path]]:
     data_dir = Path(data_path)
+    # Support multiple paths
+    paths: List[str]
+    if isinstance(data_path, list):
+        paths = data_path
+    else:
+        paths = [str(data_dir)]
     if dataset.upper() == 'MATR':
-        splitter = MATRPrimaryTestTrainTestSplitter(str(data_dir))
+        splitter = MATRPrimaryTestTrainTestSplitter(paths)
         train_files, test_files = splitter.split()
     elif dataset.upper() == 'CALCE':
         # Use a reproducible random split for CALCE
-        splitter = RandomTrainTestSplitter(str(data_dir), seed=seed, train_test_split_ratio=0.7)
+        splitter = RandomTrainTestSplitter(paths, seed=seed, train_test_split_ratio=0.7)
         train_files, test_files = splitter.split()
     elif dataset.upper() == 'CRUH':
-        splitter = CRUHTrainTestSplitter(str(data_dir))
+        splitter = CRUHTrainTestSplitter(paths)
         train_files, test_files = splitter.split()
     elif dataset.upper() == 'CRUSH':
-        splitter = CRUSHTrainTestSplitter(str(data_dir))
+        splitter = CRUSHTrainTestSplitter(paths)
         train_files, test_files = splitter.split()
     elif dataset.upper() == 'HUST':
-        splitter = HUSTTrainTestSplitter(str(data_dir))
+        splitter = HUSTTrainTestSplitter(paths)
         train_files, test_files = splitter.split()
     elif dataset.upper() == 'SNL':
-        splitter = SNLTrainTestSplitter(str(data_dir))
+        splitter = SNLTrainTestSplitter(paths)
         train_files, test_files = splitter.split()
     elif dataset.upper() == 'MIX100':
-        splitter = MIX100TrainTestSplitter(str(data_dir))
+        splitter = MIX100TrainTestSplitter(paths)
         train_files, test_files = splitter.split()
     else:
         raise ValueError(f"Unsupported dataset: {dataset}. Expected one of ['MATR', 'CALCE', 'CRUH', 'CRUSH', 'HUST', 'SNL', 'MIX100'].")
