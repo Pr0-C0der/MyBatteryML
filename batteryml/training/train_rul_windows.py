@@ -33,6 +33,14 @@ try:
 except Exception:
     _HAS_CUML = False
 
+# Optional GPyTorch (GPU Gaussian Processes)
+try:
+    import torch  # noqa: F401
+    import gpytorch  # noqa: F401
+    _HAS_GPYTORCH = True
+except Exception:
+    _HAS_GPYTORCH = False
+
 from batteryml.data.battery_data import BatteryData
 from batteryml.label.rul import RULLabelAnnotator
 from batteryml.training.train_rul_baselines import build_train_test_lists
@@ -176,6 +184,85 @@ def _build_models(use_gpu: bool = False) -> Dict[str, Pipeline]:
     models['plsr'] = Pipeline(base_steps + [('model', PLSRegression(n_components=10))])
     # PCR (PCA + Linear)
     models['pcr'] = Pipeline(base_steps + [('model', Pipeline([('pca', PCA(n_components=20)), ('lr', LinearRegression())]))])
+
+    # Optional: GPyTorch SVGP (GPU scalable GP)
+    if use_gpu and _HAS_GPYTORCH:
+        class _SVGPRegressor:
+            def __init__(self, inducing_points: int = 1024, batch_size: int = 2048, iters: int = 1500, lr: float = 1e-2):
+                self.m = int(inducing_points)
+                self.batch = int(batch_size)
+                self.iters = int(iters)
+                self.lr = float(lr)
+                self._predict_fn = None
+
+            def fit(self, X, y):
+                import torch
+                import gpytorch
+                from torch.utils.data import TensorDataset, DataLoader
+
+                device = 'cuda' if torch.cuda.is_available() else 'cpu'
+                X_t = torch.tensor(X, dtype=torch.float32, device=device)
+                y_t = torch.tensor(y, dtype=torch.float32, device=device)
+                y_mean = y_t.mean(); y_std = y_t.std().clamp_min(1e-6)
+                y_n = (y_t - y_mean) / y_std
+
+                class GPModel(gpytorch.models.ApproximateGP):
+                    def __init__(self, inducing, d):
+                        var = gpytorch.variational.VariationalStrategy(
+                            self,
+                            inducing,
+                            gpytorch.variational.CholeskyVariationalDistribution(inducing.size(0)),
+                            learn_inducing_locations=True,
+                        )
+                        super().__init__(var)
+                        self.mean_module = gpytorch.means.ConstantMean()
+                        self.covar_module = gpytorch.kernels.ScaleKernel(
+                            gpytorch.kernels.RBFKernel(ard_num_dims=d)
+                        )
+
+                    def forward(self, x):
+                        mean_x = self.mean_module(x)
+                        covar_x = self.covar_module(x)
+                        return gpytorch.distributions.MultivariateNormal(mean_x, covar_x)
+
+                m = min(self.m, X_t.shape[0])
+                inducing = X_t[torch.randperm(X_t.shape[0])[:m]].contiguous()
+                model = GPModel(inducing, X_t.shape[1]).to(device)
+                likelihood = gpytorch.likelihoods.GaussianLikelihood().to(device)
+                model.train(); likelihood.train()
+                opt = torch.optim.Adam([
+                    {'params': model.parameters()},
+                    {'params': likelihood.parameters()}
+                ], lr=self.lr)
+                mll = gpytorch.mlls.VariationalELBO(likelihood, model, num_data=X_t.shape[0])
+
+                loader = DataLoader(TensorDataset(X_t, y_n), batch_size=self.batch, shuffle=True, drop_last=False)
+                for _ in range(self.iters):
+                    for xb, yb in loader:
+                        opt.zero_grad(set_to_none=True)
+                        out = model(xb)
+                        loss = -mll(out, yb)
+                        loss.backward()
+                        opt.step()
+
+                model.eval(); likelihood.eval()
+
+                def _predict(Xtest):
+                    Xt = torch.tensor(Xtest, dtype=torch.float32, device=device)
+                    with torch.no_grad(), gpytorch.settings.fast_pred_var():
+                        mean = likelihood(model(Xt)).mean
+                    return (mean * y_std + y_mean).detach().cpu().numpy()
+
+                self._predict_fn = _predict
+                return self
+
+            def predict(self, X):
+                if self._predict_fn is None:
+                    raise RuntimeError('SVGP model not fitted')
+                return self._predict_fn(X)
+
+        models['gpytorch_svgp'] = Pipeline(base_steps + [('model', _SVGPRegressor())])
+
     return models
 
 
