@@ -25,7 +25,6 @@ except Exception:
     _HAS_XGB = False
 
 from batteryml.data.battery_data import BatteryData
-from batteryml.data_analysis.correlation_analyzer import CorrelationAnalyzer
 from batteryml.train_test_split.MATR_split import MATRPrimaryTestTrainTestSplitter
 from batteryml.train_test_split.random_split import RandomTrainTestSplitter
 
@@ -84,7 +83,7 @@ def prepare_xy(df: pd.DataFrame) -> Tuple[np.ndarray, np.ndarray, List[str], np.
     return X, y, feature_cols, groups
 
 
-def build_models(memory: Memory, seed: int = 42) -> Dict[str, Pipeline]:
+def build_models(memory: Memory, seed: int = 42, use_gpu: bool = False) -> Dict[str, Pipeline]:
     models: Dict[str, Pipeline] = {}
     # Linear Regression: impute + scale + LR
     models['linear_regression'] = Pipeline([
@@ -109,7 +108,8 @@ def build_models(memory: Memory, seed: int = 42) -> Dict[str, Pipeline]:
                 colsample_bytree=0.9,
                 random_state=seed,
                 n_jobs=-1,
-                tree_method='hist'
+                tree_method=('gpu_hist' if use_gpu else 'hist'),
+                predictor=('gpu_predictor' if use_gpu else 'auto')
             ))
         ], memory=memory)
     else:
@@ -119,14 +119,14 @@ def build_models(memory: Memory, seed: int = 42) -> Dict[str, Pipeline]:
 
 def evaluate_predictions(y_true: np.ndarray, y_pred: np.ndarray) -> Dict[str, float]:
     mae = mean_absolute_error(y_true, y_pred)
-    rmse = mean_squared_error(y_true, y_pred, squared=False)
+    rmse = mean_squared_error(y_true, y_pred) ** 0.5
     # MAPE: avoid division by zero
     eps = 1e-8
     mape = np.mean(np.abs((y_true - y_pred) / np.clip(np.abs(y_true), eps, None)))
     return {'MAE': float(mae), 'RMSE': float(rmse), 'MAPE': float(mape)}
 
 
-def run(dataset: str, data_path: str, output_dir: str, seed: int = 42, tune: bool = True, cv_splits: int = 5):
+def run(dataset: str, data_path: str, output_dir: str, seed: int = 42, tune: bool = True, cv_splits: int = 5, use_gpu: bool = False):
     out_dir = Path(output_dir)
     (out_dir / dataset.upper()).mkdir(parents=True, exist_ok=True)
     cache_dir = out_dir / 'sk_cache'
@@ -136,6 +136,15 @@ def run(dataset: str, data_path: str, output_dir: str, seed: int = 42, tune: boo
     # Build split
     train_files, test_files = build_train_test_lists(dataset, data_path, seed)
     print(f"Found {len(train_files)} train and {len(test_files)} test batteries for {dataset}.")
+    try:
+        train_names = [p.stem for p in train_files]
+        test_names = [p.stem for p in test_files]
+        if train_names:
+            print(f"Train batteries ({len(train_names)}): {', '.join(train_names)}")
+        if test_names:
+            print(f"Test batteries ({len(test_names)}): {', '.join(test_names)}")
+    except Exception:
+        pass
 
     # Analyzer to compute per-cycle feature matrices (includes derived features)
     analyzer = CorrelationAnalyzer(data_path, output_dir=str(out_dir / f"{dataset.upper()}_tmp"))
@@ -153,7 +162,7 @@ def run(dataset: str, data_path: str, output_dir: str, seed: int = 42, tune: boo
     X_test, y_test, _, _ = prepare_xy(df_test)
 
     # Train and evaluate models
-    models = build_models(memory, seed)
+    models = build_models(memory, seed, use_gpu=use_gpu)
     results = []
     for name, pipe in models.items():
         print(f"Training {name} on {dataset}...")
@@ -244,9 +253,10 @@ def main():
     parser.add_argument('--seed', type=int, default=42, help='Random seed')
     parser.add_argument('--no_tune', action='store_true', help='Disable hyperparameter tuning')
     parser.add_argument('--cv_splits', type=int, default=5, help='CV splits for hyperparameter tuning')
+    parser.add_argument('--gpu', action='store_true', help='Enable GPU acceleration for XGBoost if available')
     args = parser.parse_args()
 
-    run(args.dataset, args.data_path, args.output_dir, seed=args.seed, tune=not args.no_tune, cv_splits=args.cv_splits)
+    run(args.dataset, args.data_path, args.output_dir, seed=args.seed, tune=not args.no_tune, cv_splits=args.cv_splits, use_gpu=args.gpu)
 
 
 if __name__ == '__main__':

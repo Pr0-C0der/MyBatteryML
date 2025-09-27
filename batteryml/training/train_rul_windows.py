@@ -127,21 +127,31 @@ def _prepare_dataset(files: List[Path], feature_fns: Dict[str, callable], featur
     return X, y
 
 
-def _build_models() -> Dict[str, Pipeline]:
+def _build_models(use_gpu: bool = False) -> Dict[str, Pipeline]:
     models: Dict[str, Pipeline] = {}
     base_steps = [('imputer', SimpleImputer(strategy='median')), ('scaler', StandardScaler())]
     models['linear_regression'] = Pipeline(base_steps + [('model', LinearRegression())])
     models['random_forest'] = Pipeline(base_steps + [('model', RandomForestRegressor(n_estimators=400, random_state=42, n_jobs=-1))])
     if _HAS_XGB:
-        models['xgboost'] = Pipeline(base_steps + [('model', XGBRegressor(n_estimators=600, max_depth=6, learning_rate=0.05, subsample=0.9, colsample_bytree=0.9, random_state=42, n_jobs=-1, tree_method='hist'))])
+        models['xgboost'] = Pipeline(base_steps + [('model', XGBRegressor(n_estimators=600, max_depth=6, learning_rate=0.05, subsample=0.9, colsample_bytree=0.9, random_state=42, n_jobs=-1, tree_method=('gpu_hist' if use_gpu else 'hist'), predictor=('gpu_predictor' if use_gpu else 'auto')))])
     return models
 
 
-def run(dataset: str, data_path: str, output_dir: str, window_size: int, features: Optional[List[str]] = None):
+def run(dataset: str, data_path: str, output_dir: str, window_size: int, features: Optional[List[str]] = None, use_gpu: bool = False):
     out_dir = Path(output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
     train_files, test_files = build_train_test_lists(dataset, data_path)
+    print(f"Found {len(train_files)} train and {len(test_files)} test batteries for {dataset}.")
+    try:
+        train_names = [p.stem for p in train_files]
+        test_names = [p.stem for p in test_files]
+        if train_names:
+            print(f"Train batteries ({len(train_names)}): {', '.join(train_names)}")
+        if test_names:
+            print(f"Test batteries ({len(test_names)}): {', '.join(test_names)}")
+    except Exception:
+        pass
 
     # Feature selection
     all_fns = _available_feature_fns()
@@ -171,14 +181,14 @@ def run(dataset: str, data_path: str, output_dir: str, window_size: int, feature
 
     print(f"Train windows: {X_train.shape}, Test windows: {X_test.shape}, Features: {len(feature_names)} × window {window_size}")
 
-    models = _build_models()
+    models = _build_models(use_gpu=use_gpu)
     rows = []
     for name, pipe in models.items():
         print(f"Training {name}...")
         pipe.fit(X_train, y_train)
         y_pred = pipe.predict(X_test)
         mae = mean_absolute_error(y_test, y_pred)
-        rmse = mean_squared_error(y_test, y_pred, squared=False)
+        rmse = mean_squared_error(y_test, y_pred) ** 0.5
         rows.append({'model': name, 'MAE': float(mae), 'RMSE': float(rmse)})
         print(f"  {name}: MAE={mae:.3f} RMSE={rmse:.3f}")
 
@@ -193,9 +203,10 @@ def main():
     parser.add_argument('--window_size', type=int, default=100, help='Number of past cycles in each window')
     parser.add_argument('--features', type=str, nargs='*', default=['default'],
                         help="Which features to use: 'default', 'all', or list like avg_voltage avg_current ...")
+    parser.add_argument('--gpu', action='store_true', help='Enable GPU acceleration for XGBoost if available')
     args = parser.parse_args()
 
-    run(args.dataset, args.data_path, args.output_dir, args.window_size, features=args.features)
+    run(args.dataset, args.data_path, args.output_dir, args.window_size, features=args.features, use_gpu=args.gpu)
 
 
 if __name__ == '__main__':
