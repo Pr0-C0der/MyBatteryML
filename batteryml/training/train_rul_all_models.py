@@ -148,7 +148,7 @@ def run(dataset: str, data_path: str, output_dir: str, use_gpu: bool = False):
 
 def main():
     parser = argparse.ArgumentParser(description='Train/test many ML models for RUL using only voltage/current-derived features (per-cycle).')
-    parser.add_argument('--dataset', type=str, required=True, choices=['MATR', 'CALCE'], help='Dataset to use')
+    parser.add_argument('--dataset', type=str, required=True, choices=['MATR', 'CALCE', 'CRUH', 'CRUSH', 'HUST', 'SNL', 'MIX100'], help='Dataset to use')
     parser.add_argument('--data_path', type=str, required=True, help='Path to processed data directory')
     parser.add_argument('--output_dir', type=str, default='rul_all_models', help='Output directory')
     parser.add_argument('--gpu', action='store_true', help='Enable GPU for XGBoost if available')

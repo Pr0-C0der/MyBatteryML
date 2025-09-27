@@ -31,6 +31,11 @@ from batteryml.data_analysis.correlation_mod import (
 )
 from batteryml.train_test_split.MATR_split import MATRPrimaryTestTrainTestSplitter
 from batteryml.train_test_split.random_split import RandomTrainTestSplitter
+from batteryml.train_test_split.CRUH_split import CRUHTrainTestSplitter
+from batteryml.train_test_split.CRUSH_split import CRUSHTrainTestSplitter
+from batteryml.train_test_split.HUST_split import HUSTTrainTestSplitter
+from batteryml.train_test_split.SNL_split import SNLTrainTestSplitter
+from batteryml.train_test_split.MIX100_split import MIX100TrainTestSplitter
 
 
 def build_train_test_lists(dataset: str, data_path: str, seed: int = 42) -> Tuple[List[Path], List[Path]]:
@@ -42,8 +47,23 @@ def build_train_test_lists(dataset: str, data_path: str, seed: int = 42) -> Tupl
         # Use a reproducible random split for CALCE
         splitter = RandomTrainTestSplitter(str(data_dir), seed=seed, train_test_split_ratio=0.7)
         train_files, test_files = splitter.split()
+    elif dataset.upper() == 'CRUH':
+        splitter = CRUHTrainTestSplitter(str(data_dir))
+        train_files, test_files = splitter.split()
+    elif dataset.upper() == 'CRUSH':
+        splitter = CRUSHTrainTestSplitter(str(data_dir))
+        train_files, test_files = splitter.split()
+    elif dataset.upper() == 'HUST':
+        splitter = HUSTTrainTestSplitter(str(data_dir))
+        train_files, test_files = splitter.split()
+    elif dataset.upper() == 'SNL':
+        splitter = SNLTrainTestSplitter(str(data_dir))
+        train_files, test_files = splitter.split()
+    elif dataset.upper() == 'MIX100':
+        splitter = MIX100TrainTestSplitter(str(data_dir))
+        train_files, test_files = splitter.split()
     else:
-        raise ValueError(f"Unsupported dataset: {dataset}. Expected one of ['MATR', 'CALCE'].")
+        raise ValueError(f"Unsupported dataset: {dataset}. Expected one of ['MATR', 'CALCE', 'CRUH', 'CRUSH', 'HUST', 'SNL', 'MIX100'].")
     return [Path(p) for p in train_files], [Path(p) for p in test_files]
 
 
