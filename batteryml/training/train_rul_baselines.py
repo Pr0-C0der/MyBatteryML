@@ -25,6 +25,10 @@ except Exception:
     _HAS_XGB = False
 
 from batteryml.data.battery_data import BatteryData
+from batteryml.data_analysis.correlation_mod import (
+    ModularCorrelationAnalyzer,
+    build_default_analyzer,
+)
 from batteryml.train_test_split.MATR_split import MATRPrimaryTestTrainTestSplitter
 from batteryml.train_test_split.random_split import RandomTrainTestSplitter
 
@@ -43,16 +47,16 @@ def build_train_test_lists(dataset: str, data_path: str, seed: int = 42) -> Tupl
     return [Path(p) for p in train_files], [Path(p) for p in test_files]
 
 
-def load_cycle_feature_matrix(analyzer: CorrelationAnalyzer, file_path: Path) -> pd.DataFrame:
+def load_cycle_feature_matrix(analyzer: ModularCorrelationAnalyzer, file_path: Path) -> pd.DataFrame:
     battery = BatteryData.load(file_path)
-    df = analyzer.create_cycle_feature_matrix(battery)
+    df = analyzer.build_cycle_feature_matrix(battery)
     # Tag with battery id for traceability
     df['battery_id'] = battery.cell_id
     return df
 
 
 def combine_split_features(
-    analyzer: CorrelationAnalyzer,
+    analyzer: ModularCorrelationAnalyzer,
     files: List[Path]
 ) -> pd.DataFrame:
     frames: List[pd.DataFrame] = []
@@ -147,7 +151,7 @@ def run(dataset: str, data_path: str, output_dir: str, seed: int = 42, tune: boo
         pass
 
     # Analyzer to compute per-cycle feature matrices (includes derived features)
-    analyzer = CorrelationAnalyzer(data_path, output_dir=str(out_dir / f"{dataset.upper()}_tmp"))
+    analyzer = build_default_analyzer(data_path, output_dir=str(out_dir / f"{dataset.upper()}_tmp"), verbose=False)
 
     # Build train/test frames
     df_train = combine_split_features(analyzer, train_files)
