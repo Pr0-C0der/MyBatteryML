@@ -18,6 +18,7 @@ from sklearn.decomposition import PCA
 from sklearn.svm import SVR
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.neural_network import MLPRegressor
+from tqdm import tqdm
 
 try:
     from xgboost import XGBRegressor
@@ -125,10 +126,10 @@ def _make_windows(df: pd.DataFrame, feature_names: List[str], total_rul: int, wi
     return X, y
 
 
-def _prepare_dataset(files: List[Path], feature_fns: Dict[str, callable], feature_names: List[str], window_size: int) -> Tuple[np.ndarray, np.ndarray]:
+def _prepare_dataset(files: List[Path], feature_fns: Dict[str, callable], feature_names: List[str], window_size: int, progress_desc: str = 'Building windows') -> Tuple[np.ndarray, np.ndarray]:
     Xs: List[np.ndarray] = []
     ys: List[np.ndarray] = []
-    for f in files:
+    for f in tqdm(files, desc=progress_desc):
         try:
             battery = BatteryData.load(f)
         except Exception:
@@ -234,8 +235,8 @@ def _build_models(use_gpu: bool = False) -> Dict[str, Pipeline]:
                 mll = gpytorch.mlls.VariationalELBO(likelihood, model, num_data=X_t.shape[0])
 
                 loader = DataLoader(TensorDataset(X_t, y_n), batch_size=self.batch, shuffle=True, drop_last=False)
-                for _ in range(self.iters):
-                    for xb, yb in loader:
+                for _ in tqdm(range(self.iters), desc='SVGP epochs', leave=False):
+                    for xb, yb in tqdm(loader, desc='SVGP batches', leave=False):
                         opt.zero_grad(set_to_none=True)
                         out = model(xb)
                         loss = -mll(out, yb)
@@ -298,8 +299,8 @@ def run(dataset: str, data_path: str, output_dir: str, window_size: int, feature
     feature_fns = {n: all_fns[n] for n in feature_names if n in all_fns}
 
     # Build datasets
-    X_train, y_train = _prepare_dataset(train_files, feature_fns, feature_names, window_size)
-    X_test, y_test = _prepare_dataset(test_files, feature_fns, feature_names, window_size)
+    X_train, y_train = _prepare_dataset(train_files, feature_fns, feature_names, window_size, progress_desc='Building train windows')
+    X_test, y_test = _prepare_dataset(test_files, feature_fns, feature_names, window_size, progress_desc='Building test windows')
 
     if X_train.size == 0 or X_test.size == 0:
         print("No data available after windowing. Aborting.")
