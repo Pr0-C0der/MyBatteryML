@@ -271,7 +271,7 @@ def run(dataset: str, data_path: str, output_dir: str, seed: int = 42, tune: boo
 
 def main():
     parser = argparse.ArgumentParser(description='Train/test baseline ML models for RUL prediction (per-cycle).')
-    parser.add_argument('--dataset', type=str, required=True, choices=['MATR', 'CALCE'], help='Dataset to use')
+    parser.add_argument('--dataset', type=str, required=True, choices=['MATR', 'CALCE', 'CRUH', 'CRUSH', 'HUST', 'SNL', 'MIX100'], help='Dataset to use')
     parser.add_argument('--data_path', type=str, required=True, help='Path to processed data directory for the dataset')
     parser.add_argument('--output_dir', type=str, default='rul_baselines', help='Directory to save results')
     parser.add_argument('--seed', type=int, default=42, help='Random seed')
