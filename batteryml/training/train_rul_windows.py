@@ -430,6 +430,28 @@ def run(
         print("No data available after windowing. Aborting.")
         return
 
+    # Report columns that are entirely NaN in training (imputer will skip these)
+    try:
+        feature_names_eff: List[str] = list(feature_fns.keys())
+        num_feats = len(feature_names_eff)
+        if num_feats > 0:
+            width = int(X_train.shape[1])
+            all_nan_cols = np.all(np.isnan(X_train), axis=0)
+            if np.any(all_nan_cols):
+                print("[info] Detected all-NaN feature columns in train set (will be skipped by imputer):")
+                if width % num_feats == 0:
+                    for idx in np.where(all_nan_cols)[0].tolist():
+                        cycle_off = idx // num_feats
+                        feat_idx = idx % num_feats
+                        feat_name = feature_names_eff[feat_idx] if 0 <= feat_idx < num_feats else f"idx_{feat_idx}"
+                        print(f"  - col {idx}: feature='{feat_name}', cycle_offset={cycle_off}")
+                else:
+                    # Fallback: unknown mapping
+                    for idx in np.where(all_nan_cols)[0].tolist():
+                        print(f"  - col {idx}: (mapping unavailable; width {width} not divisible by num_features {num_feats})")
+    except Exception:
+        pass
+
     print(f"Train windows: {X_train.shape}, Test windows: {X_test.shape}, Features: {len(feature_names)} × window {window_size}")
 
     models = _build_models(use_gpu=use_gpu)
