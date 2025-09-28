@@ -160,7 +160,24 @@ def _make_battery_vector(df: pd.DataFrame, feature_names: List[str], cycle_limit
     return vec
 
 
-def _prepare_dataset_windows(files: List[Path], feature_fns: Dict[str, callable], feature_names: List[str], window_size: int, cycle_limit: Optional[int], verbose: bool, progress_desc: str) -> Tuple[np.ndarray, np.ndarray]:
+def _report_missing_for_battery(cell_id: str, df: pd.DataFrame, feature_names: List[str], cycle_limit: Optional[int], verbose: bool = False) -> None:
+    dfn = _filter_df_by_cycle_limit(df, cycle_limit, verbose=False)
+    cols = [c for c in feature_names if c in dfn.columns]
+    if not cols:
+        return
+    # Identify rows with any NaN among selected features
+    sub = dfn[['cycle_number'] + cols].copy()
+    mask_any = sub[cols].isna().any(axis=1)
+    if not mask_any.any():
+        if verbose:
+            print(f"[missing] {cell_id}: no NaNs in selected features")
+        return
+    for _, row in sub[mask_any].iterrows():
+        missing_feats = [c for c in cols if pd.isna(row[c])]
+        print(f"[missing] battery={cell_id} cycle={int(row['cycle_number'])} features={missing_feats}")
+
+
+def _prepare_dataset_windows(files: List[Path], feature_fns: Dict[str, callable], feature_names: List[str], window_size: int, cycle_limit: Optional[int], verbose: bool, report_missing: bool, progress_desc: str) -> Tuple[np.ndarray, np.ndarray]:
     Xs: List[np.ndarray] = []
     ys: List[np.ndarray] = []
     for f in tqdm(files, desc=progress_desc):
@@ -170,6 +187,8 @@ def _prepare_dataset_windows(files: List[Path], feature_fns: Dict[str, callable]
             continue
         total_rul = _compute_total_rul(battery)
         df = _build_cycle_feature_table(battery, feature_fns)
+        if report_missing:
+            _report_missing_for_battery(battery.cell_id, df, feature_names, cycle_limit, verbose=verbose)
         Xw, yw = _make_windows(df, feature_names, total_rul, window_size, cycle_limit=cycle_limit, verbose=verbose)
         if Xw.size and yw.size:
             Xs.append(Xw)
@@ -183,7 +202,7 @@ def _prepare_dataset_windows(files: List[Path], feature_fns: Dict[str, callable]
     return X, y
 
 
-def _prepare_dataset_battery_level(files: List[Path], feature_fns: Dict[str, callable], feature_names: List[str], cycle_limit: int, verbose: bool, progress_desc: str) -> Tuple[np.ndarray, np.ndarray]:
+def _prepare_dataset_battery_level(files: List[Path], feature_fns: Dict[str, callable], feature_names: List[str], cycle_limit: int, verbose: bool, report_missing: bool, progress_desc: str) -> Tuple[np.ndarray, np.ndarray]:
     X_list: List[np.ndarray] = []
     y_list: List[float] = []
     for f in tqdm(files, desc=progress_desc):
@@ -193,6 +212,8 @@ def _prepare_dataset_battery_level(files: List[Path], feature_fns: Dict[str, cal
             continue
         total_rul = _compute_total_rul(battery)
         df = _build_cycle_feature_table(battery, feature_fns)
+        if report_missing:
+            _report_missing_for_battery(battery.cell_id, df, feature_names, cycle_limit, verbose=verbose)
         vec = _make_battery_vector(df, feature_names, cycle_limit=cycle_limit, verbose=verbose)
         if vec.size == 0:
             if verbose:
@@ -326,7 +347,7 @@ def _build_models(use_gpu: bool = False) -> Dict[str, Pipeline]:
     return models
 
 
-def run(dataset: str, data_path: str, output_dir: str, window_size: int, features: Optional[List[str]] = None, use_gpu: bool = False, cycle_limit: Optional[int] = None, battery_level: bool = False, verbose: bool = False):
+def run(dataset: str, data_path: str, output_dir: str, window_size: int, features: Optional[List[str]] = None, use_gpu: bool = False, cycle_limit: Optional[int] = None, battery_level: bool = False, verbose: bool = False, report_missing: bool = False):
     out_dir = Path(output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -364,11 +385,11 @@ def run(dataset: str, data_path: str, output_dir: str, window_size: int, feature
     if battery_level:
         if cycle_limit is None:
             raise ValueError("--battery_level requires --cycle_limit to define vector length")
-        X_train, y_train = _prepare_dataset_battery_level(train_files, feature_fns, feature_names, cycle_limit=int(cycle_limit), verbose=verbose, progress_desc='Building train battery vectors')
-        X_test, y_test = _prepare_dataset_battery_level(test_files, feature_fns, feature_names, cycle_limit=int(cycle_limit), verbose=verbose, progress_desc='Building test battery vectors')
+        X_train, y_train = _prepare_dataset_battery_level(train_files, feature_fns, feature_names, cycle_limit=int(cycle_limit), verbose=verbose, report_missing=report_missing, progress_desc='Building train battery vectors')
+        X_test, y_test = _prepare_dataset_battery_level(test_files, feature_fns, feature_names, cycle_limit=int(cycle_limit), verbose=verbose, report_missing=report_missing, progress_desc='Building test battery vectors')
     else:
-        X_train, y_train = _prepare_dataset_windows(train_files, feature_fns, feature_names, window_size, cycle_limit=cycle_limit, verbose=verbose, progress_desc='Building train windows')
-        X_test, y_test = _prepare_dataset_windows(test_files, feature_fns, feature_names, window_size, cycle_limit=cycle_limit, verbose=verbose, progress_desc='Building test windows')
+        X_train, y_train = _prepare_dataset_windows(train_files, feature_fns, feature_names, window_size, cycle_limit=cycle_limit, verbose=verbose, report_missing=report_missing, progress_desc='Building train windows')
+        X_test, y_test = _prepare_dataset_windows(test_files, feature_fns, feature_names, window_size, cycle_limit=cycle_limit, verbose=verbose, report_missing=report_missing, progress_desc='Building test windows')
 
     if X_train.size == 0 or X_test.size == 0:
         print("No data available after windowing. Aborting.")
@@ -406,9 +427,10 @@ def main():
     parser.add_argument('--cycle_limit', type=int, default=None, help='Use only cycles <= this index for features (early-cycle cap)')
     parser.add_argument('--battery_level', action='store_true', help='Enable battery-level RUL: one vector per battery, one scalar label')
     parser.add_argument('--verbose', action='store_true', help='Verbose diagnostics (shapes, NaNs, skips)')
+    parser.add_argument('--report_missing', action='store_true', help='Report per-battery, per-cycle missing features (NaNs)')
     args = parser.parse_args()
 
-    run(args.dataset, args.data_path, args.output_dir, args.window_size, features=args.features, use_gpu=args.gpu, cycle_limit=args.cycle_limit, battery_level=args.battery_level, verbose=args.verbose)
+    run(args.dataset, args.data_path, args.output_dir, args.window_size, features=args.features, use_gpu=args.gpu, cycle_limit=args.cycle_limit, battery_level=args.battery_level, verbose=args.verbose, report_missing=args.report_missing)
 
 
 if __name__ == '__main__':
