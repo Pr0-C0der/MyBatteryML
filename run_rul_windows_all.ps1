@@ -3,7 +3,7 @@
 $ErrorActionPreference = 'Stop'
 
 # Datasets to run (include MATR1/MATR2/CLO variants)
-$datasets = @('MATR1', 'MATR2', 'CLO', 'CALCE', 'CRUH', 'CRUSH', 'HUST', 'SNL', 'MIX100')
+$datasets = @('CRUH', 'CRUSH', 'HUST', 'SNL', 'MIX100', 'MATR1', 'MATR2', 'CLO', 'CALCE')
 $cycleLimit = 100
 $outputRoot = 'rul_windows'
 $aggregatePath = Join-Path $outputRoot "aggregate_metrics_bl_cl$cycleLimit.csv"
