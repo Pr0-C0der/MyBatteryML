@@ -11,6 +11,8 @@ from sklearn.pipeline import Pipeline
 from sklearn.impute import SimpleImputer
 from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import mean_absolute_error, mean_squared_error
+from sklearn.model_selection import GroupKFold, ParameterGrid
+from sklearn.base import clone
 
 from sklearn.linear_model import LinearRegression, Ridge, ElasticNet
 from sklearn.cross_decomposition import PLSRegression
@@ -177,9 +179,10 @@ def _report_missing_for_battery(cell_id: str, df: pd.DataFrame, feature_names: L
         print(f"[missing] battery={cell_id} cycle={int(row['cycle_number'])} features={missing_feats}")
 
 
-def _prepare_dataset_windows(files: List[Path], feature_fns: Dict[str, callable], feature_names: List[str], window_size: int, cycle_limit: Optional[int], verbose: bool, report_missing: bool, progress_desc: str) -> Tuple[np.ndarray, np.ndarray]:
+def _prepare_dataset_windows(files: List[Path], feature_fns: Dict[str, callable], feature_names: List[str], window_size: int, cycle_limit: Optional[int], verbose: bool, report_missing: bool, progress_desc: str) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
     Xs: List[np.ndarray] = []
     ys: List[np.ndarray] = []
+    groups: List[str] = []
     for f in tqdm(files, desc=progress_desc):
         try:
             battery = BatteryData.load(f)
@@ -193,18 +196,21 @@ def _prepare_dataset_windows(files: List[Path], feature_fns: Dict[str, callable]
         if Xw.size and yw.size:
             Xs.append(Xw)
             ys.append(yw)
+            groups.extend([battery.cell_id] * Xw.shape[0])
         elif verbose:
             print(f"[skip] {f.name}: produced no windows")
     if not Xs:
-        return np.zeros((0, len(feature_names) * window_size), dtype=float), np.zeros((0,), dtype=float)
+        return np.zeros((0, len(feature_names) * window_size), dtype=float), np.zeros((0,), dtype=float), np.zeros((0,), dtype=object)
     X = np.vstack(Xs)
     y = np.concatenate(ys)
-    return X, y
+    g = np.array(groups, dtype=object)
+    return X, y, g
 
 
-def _prepare_dataset_battery_level(files: List[Path], feature_fns: Dict[str, callable], feature_names: List[str], cycle_limit: int, verbose: bool, report_missing: bool, progress_desc: str) -> Tuple[np.ndarray, np.ndarray]:
+def _prepare_dataset_battery_level(files: List[Path], feature_fns: Dict[str, callable], feature_names: List[str], cycle_limit: int, verbose: bool, report_missing: bool, progress_desc: str) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
     X_list: List[np.ndarray] = []
     y_list: List[float] = []
+    groups: List[str] = []
     for f in tqdm(files, desc=progress_desc):
         try:
             battery = BatteryData.load(f)
@@ -221,13 +227,15 @@ def _prepare_dataset_battery_level(files: List[Path], feature_fns: Dict[str, cal
             continue
         X_list.append(vec)
         y_list.append(float(total_rul))
+        groups.append(battery.cell_id)
     if not X_list:
-        return np.zeros((0, len(feature_names) * int(cycle_limit)), dtype=float), np.zeros((0,), dtype=float)
+        return np.zeros((0, len(feature_names) * int(cycle_limit)), dtype=float), np.zeros((0,), dtype=float), np.zeros((0,), dtype=object)
     X = np.vstack([x.reshape(1, -1) for x in X_list])
     y = np.array(y_list, dtype=float)
+    g = np.array(groups, dtype=object)
     if verbose:
         print(f"[battery_level] X={X.shape}, y={y.shape}")
-    return X, y
+    return X, y, g
 
 
 def _build_models(use_gpu: bool = False) -> Dict[str, Pipeline]:
@@ -366,7 +374,7 @@ def _build_models(use_gpu: bool = False) -> Dict[str, Pipeline]:
     return models
 
 
-def run(dataset: str, data_path: str, output_dir: str, window_size: int, features: Optional[List[str]] = None, use_gpu: bool = False, cycle_limit: Optional[int] = None, battery_level: bool = False, verbose: bool = False, report_missing: bool = False):
+def run(dataset: str, data_path: str, output_dir: str, window_size: int, features: Optional[List[str]] = None, use_gpu: bool = False, cycle_limit: Optional[int] = None, battery_level: bool = False, verbose: bool = False, report_missing: bool = False, tune: bool = False, cv_splits: int = 5):
     out_dir = Path(output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -404,11 +412,11 @@ def run(dataset: str, data_path: str, output_dir: str, window_size: int, feature
     if battery_level:
         if cycle_limit is None:
             raise ValueError("--battery_level requires --cycle_limit to define vector length")
-        X_train, y_train = _prepare_dataset_battery_level(train_files, feature_fns, feature_names, cycle_limit=int(cycle_limit), verbose=verbose, report_missing=report_missing, progress_desc='Building train battery vectors')
-        X_test, y_test = _prepare_dataset_battery_level(test_files, feature_fns, feature_names, cycle_limit=int(cycle_limit), verbose=verbose, report_missing=report_missing, progress_desc='Building test battery vectors')
+        X_train, y_train, g_train = _prepare_dataset_battery_level(train_files, feature_fns, feature_names, cycle_limit=int(cycle_limit), verbose=verbose, report_missing=report_missing, progress_desc='Building train battery vectors')
+        X_test, y_test, _ = _prepare_dataset_battery_level(test_files, feature_fns, feature_names, cycle_limit=int(cycle_limit), verbose=verbose, report_missing=report_missing, progress_desc='Building test battery vectors')
     else:
-        X_train, y_train = _prepare_dataset_windows(train_files, feature_fns, feature_names, window_size, cycle_limit=cycle_limit, verbose=verbose, report_missing=report_missing, progress_desc='Building train windows')
-        X_test, y_test = _prepare_dataset_windows(test_files, feature_fns, feature_names, window_size, cycle_limit=cycle_limit, verbose=verbose, report_missing=report_missing, progress_desc='Building test windows')
+        X_train, y_train, g_train = _prepare_dataset_windows(train_files, feature_fns, feature_names, window_size, cycle_limit=cycle_limit, verbose=verbose, report_missing=report_missing, progress_desc='Building train windows')
+        X_test, y_test, _ = _prepare_dataset_windows(test_files, feature_fns, feature_names, window_size, cycle_limit=cycle_limit, verbose=verbose, report_missing=report_missing, progress_desc='Building test windows')
 
     if X_train.size == 0 or X_test.size == 0:
         print("No data available after windowing. Aborting.")
@@ -423,11 +431,72 @@ def run(dataset: str, data_path: str, output_dir: str, window_size: int, feature
     rows = []
     for name, pipe in models.items():
         print(f"Training {name}...")
-        pipe.fit(X_train, y_train)
-        y_pred = pipe.predict(X_test)
+        est = pipe
+        best_params = None
+        if tune:
+            if name == 'linear_regression':
+                param_grid = {'model__fit_intercept': [True, False]}
+            elif name == 'random_forest':
+                param_grid = {
+                    'model__n_estimators': [200, 400, 800],
+                    'model__max_depth': [None, 10, 20, 40],
+                    'model__min_samples_split': [2, 5, 10],
+                    'model__min_samples_leaf': [1, 2, 4],
+                }
+            elif name == 'xgboost':
+                param_grid = {
+                    'model__n_estimators': [300, 600, 1000],
+                    'model__max_depth': [4, 6, 8],
+                    'model__learning_rate': [0.03, 0.05, 0.1],
+                    'model__subsample': [0.8, 0.9, 1.0],
+                    'model__colsample_bytree': [0.8, 0.9, 1.0],
+                }
+            else:
+                param_grid = {}
+
+            if param_grid:
+                unique_groups = np.unique(g_train)
+                n_splits = min(cv_splits, len(unique_groups)) if len(unique_groups) > 1 else 2
+                cv = GroupKFold(n_splits=n_splits)
+                grid = list(ParameterGrid(param_grid))
+                from tqdm import tqdm as _tqdm
+                results = []
+                best_score = np.inf
+                best_params = None
+                best_estimator = None
+                pbar = _tqdm(grid, desc=f"Tuning {name} ({len(grid)} cfgs x {n_splits} folds)")
+                for params in pbar:
+                    fold_maes = []
+                    for tr_idx, va_idx in cv.split(X_train, y_train, groups=g_train):
+                        X_tr, X_va = X_train[tr_idx], X_train[va_idx]
+                        y_tr, y_va = y_train[tr_idx], y_train[va_idx]
+                        model = clone(pipe)
+                        model.set_params(**params)
+                        model.fit(X_tr, y_tr)
+                        pred = model.predict(X_va)
+                        fold_maes.append(mean_absolute_error(y_va, pred))
+                    mean_mae = float(np.mean(fold_maes)) if fold_maes else np.inf
+                    results.append({**{f"param:{k}": v for k, v in params.items()}, 'mean_MAE': mean_mae})
+                    pbar.set_postfix({"MAE": f"{mean_mae:.3f}"})
+                    if mean_mae < best_score:
+                        best_score = mean_mae
+                        best_params = params
+                        best_estimator = clone(pipe).set_params(**params)
+                if best_estimator is not None:
+                    est = best_estimator
+                # Save CV results
+                cv_path = Path(output_dir) / f"{dataset.upper()}_{name}_cv_results.csv"
+                pd.DataFrame(results).to_csv(cv_path, index=False)
+
+        if best_params is None:
+            est.fit(X_train, y_train)
+        y_pred = est.predict(X_test)
         mae = mean_absolute_error(y_test, y_pred)
         rmse = mean_squared_error(y_test, y_pred) ** 0.5
-        rows.append({'model': name, 'MAE': float(mae), 'RMSE': float(rmse)})
+        row = {'model': name, 'MAE': float(mae), 'RMSE': float(rmse)}
+        if best_params is not None:
+            row.update({f"param:{k}": v for k, v in best_params.items()})
+        rows.append(row)
         print(f"  {name}: MAE={mae:.3f} RMSE={rmse:.3f}")
 
     suffix = (f"_bl_cl{cycle_limit}" if battery_level else f"_ws{window_size}") + ("_cl" if cycle_limit and not battery_level else "")
@@ -447,9 +516,11 @@ def main():
     parser.add_argument('--battery_level', action='store_true', help='Enable battery-level RUL: one vector per battery, one scalar label')
     parser.add_argument('--verbose', action='store_true', help='Verbose diagnostics (shapes, NaNs, skips)')
     parser.add_argument('--report_missing', action='store_true', help='Report per-battery, per-cycle missing features (NaNs)')
+    parser.add_argument('--tune', action='store_true', help='Enable GridSearchCV with GroupKFold on training set')
+    parser.add_argument('--cv_splits', type=int, default=5, help='Number of GroupKFold splits for tuning (default 5)')
     args = parser.parse_args()
 
-    run(args.dataset, args.data_path, args.output_dir, args.window_size, features=args.features, use_gpu=args.gpu, cycle_limit=args.cycle_limit, battery_level=args.battery_level, verbose=args.verbose, report_missing=args.report_missing)
+    run(args.dataset, args.data_path, args.output_dir, args.window_size, features=args.features, use_gpu=args.gpu, cycle_limit=args.cycle_limit, battery_level=args.battery_level, verbose=args.verbose, report_missing=args.report_missing, tune=args.tune, cv_splits=args.cv_splits)
 
 
 if __name__ == '__main__':
