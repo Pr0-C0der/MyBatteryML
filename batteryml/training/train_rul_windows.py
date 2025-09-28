@@ -97,23 +97,18 @@ def _build_cycle_feature_table(battery: BatteryData, feature_fns: Dict[str, call
     return pd.DataFrame(rows)
 
 
-def _make_windows(
-    df: pd.DataFrame,
-    feature_names: List[str],
-    total_rul: int,
-    window_size: Optional[int],
-    min_cycle_index: Optional[int] = None,
-    max_cycle_index: Optional[int] = None,
-    battery_level: bool = False,
-    battery_label_mode: str = 'rul_at_cutoff',  # 'rul_at_cutoff' or 'total_life'
-) -> Tuple[np.ndarray, np.ndarray]:
-    # df must be sorted by cycle_number ascending
+def _filter_df_by_cycle_limit(df: pd.DataFrame, cycle_limit: Optional[int], verbose: bool = False) -> pd.DataFrame:
     dfn = df.sort_values('cycle_number').reset_index(drop=True)
-    # Apply optional cycle bounds (early-life filtering)
-    if min_cycle_index is not None or max_cycle_index is not None:
-        lo = -np.inf if min_cycle_index is None else float(min_cycle_index)
-        hi = np.inf if max_cycle_index is None else float(max_cycle_index)
-        dfn = dfn[(dfn['cycle_number'] >= lo) & (dfn['cycle_number'] <= hi)].reset_index(drop=True)
+    if cycle_limit is not None:
+        dfn = dfn[dfn['cycle_number'] <= int(cycle_limit)].reset_index(drop=True)
+        if verbose:
+            print(f"[filter] cycle_limit={cycle_limit} -> {len(dfn)} rows remaining")
+    return dfn
+
+
+def _make_windows(df: pd.DataFrame, feature_names: List[str], total_rul: int, window_size: int, cycle_limit: Optional[int] = None, verbose: bool = False) -> Tuple[np.ndarray, np.ndarray]:
+    # df must be sorted by cycle_number ascending
+    dfn = _filter_df_by_cycle_limit(df, cycle_limit, verbose=verbose)
     # Ensure features present
     cols = [c for c in feature_names if c in dfn.columns]
     if not cols:
@@ -122,68 +117,14 @@ def _make_windows(
     X_list: List[np.ndarray] = []
     y_list: List[float] = []
     num_cycles = len(dfn)
-    feat_mat = dfn[cols].to_numpy()  # shape [num_cycles, num_feats]
-
-    if battery_level:
-        # Pick a single window ending at the cutoff (prefer max_cycle_index if provided, else the last available)
-        if battery_label_mode == 'total_life':
-            # Determine desired number of cycles in the vector
-            desired_len: Optional[int] = None
-            if (min_cycle_index is not None) and (max_cycle_index is not None):
-                desired_len = int(max(0, (max_cycle_index - min_cycle_index + 1)))
-            elif window_size is not None:
-                desired_len = int(window_size)
-            else:
-                # Cannot determine a consistent vector length across batteries
-                return np.zeros((0, 0), dtype=float), np.zeros((0,), dtype=float)
-
-            if desired_len <= 0:
-                return np.zeros((0, 0), dtype=float), np.zeros((0,), dtype=float)
-
-            # Take available cycles (already filtered) and pad/truncate to desired_len
-            if num_cycles >= desired_len:
-                w = feat_mat[:desired_len, :]
-            else:
-                pad_rows = desired_len - num_cycles
-                pad = np.full((pad_rows, feat_mat.shape[1]), np.nan, dtype=float)
-                w = np.vstack([feat_mat, pad])
-
-            x = w.reshape(-1)
-            yval = float(total_rul)  # total life from start
-            return x.reshape(1, -1), np.array([yval], dtype=float)
-        else:
-            # rul_at_cutoff requires a next-cycle target; compute k and enforce availability
-            if window_size is None:
-                return np.zeros((0, 0), dtype=float), np.zeros((0,), dtype=float)
-            last_start = num_cycles - (window_size + 1)
-            if last_start < 0:
-                return np.zeros((0, len(cols) * window_size), dtype=float), np.zeros((0,), dtype=float)
-            if max_cycle_index is not None:
-                target_end_idx = int(max_cycle_index)
-                mask = (dfn['cycle_number'].astype(float) == float(target_end_idx))
-                if not mask.any():
-                    k = last_start
-                else:
-                    end_loc = int(np.where(mask.values)[0][0])
-                    k = end_loc - (window_size - 1)
-                    if k < 0:
-                        k = 0
-                    if k > last_start:
-                        k = last_start
-            else:
-                k = last_start
-            w = feat_mat[k:k + window_size, :]
-            x = w.reshape(-1)
-            yval = float(max(0, total_rul - (k + window_size)))
-            return x.reshape(1, -1), np.array([yval], dtype=float)
-
-    # Sliding window mode (per-window samples)
-    if window_size is None:
-        return np.zeros((0, 0), dtype=float), np.zeros((0,), dtype=float)
+    # Window targets the next cycle's RUL: cycles [k, k+N-1] -> target at (k+N)
     last_start = num_cycles - (window_size + 1)
     if last_start < 0:
+        if verbose:
+            print(f"[skip] not enough cycles for windows: cycles={num_cycles}, window_size={window_size}")
         return np.zeros((0, len(cols) * window_size), dtype=float), np.zeros((0,), dtype=float)
 
+    feat_mat = dfn[cols].to_numpy()  # shape [num_cycles, num_feats]
     for k in range(0, last_start + 1):
         w = feat_mat[k:k + window_size, :]  # [N, F]
         # If any row is all NaN, imputer will handle later; leave NaN as np.nan
@@ -198,17 +139,28 @@ def _make_windows(
     return X, y
 
 
-def _prepare_dataset(
-    files: List[Path],
-    feature_fns: Dict[str, callable],
-    feature_names: List[str],
-    window_size: Optional[int],
-    progress_desc: str = 'Building windows',
-    min_cycle_index: Optional[int] = None,
-    max_cycle_index: Optional[int] = None,
-    battery_level: bool = False,
-    battery_label_mode: str = 'rul_at_cutoff',
-) -> Tuple[np.ndarray, np.ndarray]:
+def _make_battery_vector(df: pd.DataFrame, feature_names: List[str], cycle_limit: int, verbose: bool = False) -> np.ndarray:
+    dfn = _filter_df_by_cycle_limit(df, cycle_limit, verbose=verbose)
+    cols = [c for c in feature_names if c in dfn.columns]
+    if not cols:
+        return np.zeros((0,), dtype=float)
+    # Ensure exactly cycle_limit rows: pad with NaN or truncate
+    K = int(cycle_limit)
+    mat = dfn[cols].to_numpy()  # [num_cycles, F]
+    F = len(cols)
+    if mat.shape[0] >= K:
+        matK = mat[:K, :]
+    else:
+        pad = np.full((K - mat.shape[0], F), np.nan, dtype=float)
+        matK = np.vstack([mat, pad])
+    vec = matK.reshape(-1)
+    if verbose:
+        n_nans = int(np.isnan(vec).sum())
+        print(f"[battery_vector] len={vec.size}, features={F}, cycles_used={min(K, mat.shape[0])}, pad={(K - min(K, mat.shape[0]))}, NaNs={n_nans}")
+    return vec
+
+
+def _prepare_dataset_windows(files: List[Path], feature_fns: Dict[str, callable], feature_names: List[str], window_size: int, cycle_limit: Optional[int], verbose: bool, progress_desc: str) -> Tuple[np.ndarray, np.ndarray]:
     Xs: List[np.ndarray] = []
     ys: List[np.ndarray] = []
     for f in tqdm(files, desc=progress_desc):
@@ -218,31 +170,42 @@ def _prepare_dataset(
             continue
         total_rul = _compute_total_rul(battery)
         df = _build_cycle_feature_table(battery, feature_fns)
-        Xw, yw = _make_windows(
-            df,
-            feature_names,
-            total_rul,
-            window_size,
-            min_cycle_index=min_cycle_index,
-            max_cycle_index=max_cycle_index,
-            battery_level=battery_level,
-            battery_label_mode=battery_label_mode,
-        )
+        Xw, yw = _make_windows(df, feature_names, total_rul, window_size, cycle_limit=cycle_limit, verbose=verbose)
         if Xw.size and yw.size:
             Xs.append(Xw)
             ys.append(yw)
+        elif verbose:
+            print(f"[skip] {f.name}: produced no windows")
     if not Xs:
-        # Determine a safe feature width for empty result
-        if window_size is not None:
-            width = len(feature_names) * int(window_size)
-        elif (min_cycle_index is not None) and (max_cycle_index is not None):
-            span = int(max(0, (max_cycle_index - min_cycle_index + 1)))
-            width = len(feature_names) * span
-        else:
-            width = 0
-        return np.zeros((0, width), dtype=float), np.zeros((0,), dtype=float)
+        return np.zeros((0, len(feature_names) * window_size), dtype=float), np.zeros((0,), dtype=float)
     X = np.vstack(Xs)
     y = np.concatenate(ys)
+    return X, y
+
+
+def _prepare_dataset_battery_level(files: List[Path], feature_fns: Dict[str, callable], feature_names: List[str], cycle_limit: int, verbose: bool, progress_desc: str) -> Tuple[np.ndarray, np.ndarray]:
+    X_list: List[np.ndarray] = []
+    y_list: List[float] = []
+    for f in tqdm(files, desc=progress_desc):
+        try:
+            battery = BatteryData.load(f)
+        except Exception:
+            continue
+        total_rul = _compute_total_rul(battery)
+        df = _build_cycle_feature_table(battery, feature_fns)
+        vec = _make_battery_vector(df, feature_names, cycle_limit=cycle_limit, verbose=verbose)
+        if vec.size == 0:
+            if verbose:
+                print(f"[skip] {f.name}: no features present after filtering")
+            continue
+        X_list.append(vec)
+        y_list.append(float(total_rul))
+    if not X_list:
+        return np.zeros((0, len(feature_names) * int(cycle_limit)), dtype=float), np.zeros((0,), dtype=float)
+    X = np.vstack([x.reshape(1, -1) for x in X_list])
+    y = np.array(y_list, dtype=float)
+    if verbose:
+        print(f"[battery_level] X={X.shape}, y={y.shape}")
     return X, y
 
 
@@ -363,18 +326,7 @@ def _build_models(use_gpu: bool = False) -> Dict[str, Pipeline]:
     return models
 
 
-def run(
-    dataset: str,
-    data_path: str,
-    output_dir: str,
-    window_size: Optional[int],
-    features: Optional[List[str]] = None,
-    use_gpu: bool = False,
-    min_cycle_index: Optional[int] = None,
-    max_cycle_index: Optional[int] = None,
-    battery_level: bool = False,
-    battery_label_mode: str = 'rul_at_cutoff',
-):
+def run(dataset: str, data_path: str, output_dir: str, window_size: int, features: Optional[List[str]] = None, use_gpu: bool = False, cycle_limit: Optional[int] = None, battery_level: bool = False, verbose: bool = False):
     out_dir = Path(output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -409,50 +361,23 @@ def run(
     feature_fns = {n: all_fns[n] for n in feature_names if n in all_fns}
 
     # Build datasets
-    X_train, y_train = _prepare_dataset(
-        train_files, feature_fns, feature_names, window_size,
-        progress_desc='Building train windows',
-        min_cycle_index=min_cycle_index,
-        max_cycle_index=max_cycle_index,
-        battery_level=battery_level,
-        battery_label_mode=battery_label_mode,
-    )
-    X_test, y_test = _prepare_dataset(
-        test_files, feature_fns, feature_names, window_size,
-        progress_desc='Building test windows',
-        min_cycle_index=min_cycle_index,
-        max_cycle_index=max_cycle_index,
-        battery_level=battery_level,
-        battery_label_mode=battery_label_mode,
-    )
+    if battery_level:
+        if cycle_limit is None:
+            raise ValueError("--battery_level requires --cycle_limit to define vector length")
+        X_train, y_train = _prepare_dataset_battery_level(train_files, feature_fns, feature_names, cycle_limit=int(cycle_limit), verbose=verbose, progress_desc='Building train battery vectors')
+        X_test, y_test = _prepare_dataset_battery_level(test_files, feature_fns, feature_names, cycle_limit=int(cycle_limit), verbose=verbose, progress_desc='Building test battery vectors')
+    else:
+        X_train, y_train = _prepare_dataset_windows(train_files, feature_fns, feature_names, window_size, cycle_limit=cycle_limit, verbose=verbose, progress_desc='Building train windows')
+        X_test, y_test = _prepare_dataset_windows(test_files, feature_fns, feature_names, window_size, cycle_limit=cycle_limit, verbose=verbose, progress_desc='Building test windows')
 
     if X_train.size == 0 or X_test.size == 0:
         print("No data available after windowing. Aborting.")
         return
 
-    # Report columns that are entirely NaN in training (imputer will skip these)
-    try:
-        feature_names_eff: List[str] = list(feature_fns.keys())
-        num_feats = len(feature_names_eff)
-        if num_feats > 0:
-            width = int(X_train.shape[1])
-            all_nan_cols = np.all(np.isnan(X_train), axis=0)
-            if np.any(all_nan_cols):
-                print("[info] Detected all-NaN feature columns in train set (will be skipped by imputer):")
-                if width % num_feats == 0:
-                    for idx in np.where(all_nan_cols)[0].tolist():
-                        cycle_off = idx // num_feats
-                        feat_idx = idx % num_feats
-                        feat_name = feature_names_eff[feat_idx] if 0 <= feat_idx < num_feats else f"idx_{feat_idx}"
-                        print(f"  - col {idx}: feature='{feat_name}', cycle_offset={cycle_off}")
-                else:
-                    # Fallback: unknown mapping
-                    for idx in np.where(all_nan_cols)[0].tolist():
-                        print(f"  - col {idx}: (mapping unavailable; width {width} not divisible by num_features {num_feats})")
-    except Exception:
-        pass
-
-    print(f"Train windows: {X_train.shape}, Test windows: {X_test.shape}, Features: {len(feature_names)} × window {window_size}")
+    if battery_level:
+        print(f"Train batteries: {X_train.shape}, Test batteries: {X_test.shape}, Feature dim: {X_train.shape[1] if X_train.size else 0}")
+    else:
+        print(f"Train windows: {X_train.shape}, Test windows: {X_test.shape}, Features: {len(feature_names)} × window {window_size}")
 
     models = _build_models(use_gpu=use_gpu)
     rows = []
@@ -465,36 +390,25 @@ def run(
         rows.append({'model': name, 'MAE': float(mae), 'RMSE': float(rmse)})
         print(f"  {name}: MAE={mae:.3f} RMSE={rmse:.3f}")
 
-    pd.DataFrame(rows).to_csv(out_dir / f"rul_window_metrics_ws{window_size}.csv", index=False)
+    suffix = (f"_bl_cl{cycle_limit}" if battery_level else f"_ws{window_size}") + ("_cl" if cycle_limit and not battery_level else "")
+    pd.DataFrame(rows).to_csv(out_dir / f"rul_metrics{suffix}.csv", index=False)
 
 
 def main():
-    parser = argparse.ArgumentParser(description='RUL prediction with sliding windows of per-cycle features')
+    parser = argparse.ArgumentParser(description='RUL prediction with per-cycle features (windowed or battery-level)')
     parser.add_argument('--dataset', type=str, required=True, choices=['MATR', 'CALCE', 'CRUH', 'CRUSH', 'HUST', 'SNL', 'MIX100'], help='Dataset name')
     parser.add_argument('--data_path', type=str, nargs='+', required=True, help='One or more paths: directories with .pkl or a file listing .pkl paths')
     parser.add_argument('--output_dir', type=str, default='rul_windows', help='Output directory')
-    parser.add_argument('--window_size', type=int, default=None, help='Number of past cycles in each window (omit in battery-level total_life to use [min,max] range)')
+    parser.add_argument('--window_size', type=int, default=100, help='Number of past cycles in each window')
     parser.add_argument('--features', type=str, nargs='*', default=['default'],
                         help="Which features to use: 'default', 'all', or list like avg_voltage avg_current ...")
     parser.add_argument('--gpu', action='store_true', help='Enable GPU acceleration for XGBoost if available')
-    parser.add_argument('--min_cycle_index', type=int, default=0, help='Minimum cycle index to include (early-life filter)')
-    parser.add_argument('--max_cycle_index', type=int, default=101, help='Maximum cycle index to include (early-life filter)')
-    parser.add_argument('--battery_level', action='store_true', help='Use one early window per battery to predict a single scalar RUL per battery')
-    parser.add_argument('--battery_label_mode', type=str, choices=['rul_at_cutoff', 'total_life'], default='rul_at_cutoff', help='Battery-level label: RUL at cutoff or total life from start')
+    parser.add_argument('--cycle_limit', type=int, default=None, help='Use only cycles <= this index for features (early-cycle cap)')
+    parser.add_argument('--battery_level', action='store_true', help='Enable battery-level RUL: one vector per battery, one scalar label')
+    parser.add_argument('--verbose', action='store_true', help='Verbose diagnostics (shapes, NaNs, skips)')
     args = parser.parse_args()
 
-    run(
-        args.dataset,
-        args.data_path,
-        args.output_dir,
-        args.window_size,
-        features=args.features,
-        use_gpu=args.gpu,
-        min_cycle_index=args.min_cycle_index,
-        max_cycle_index=args.max_cycle_index,
-        battery_level=args.battery_level,
-        battery_label_mode=args.battery_label_mode,
-    )
+    run(args.dataset, args.data_path, args.output_dir, args.window_size, features=args.features, use_gpu=args.gpu, cycle_limit=args.cycle_limit, battery_level=args.battery_level, verbose=args.verbose)
 
 
 if __name__ == '__main__':
