@@ -38,7 +38,7 @@ from batteryml.data_analysis.correlation_mod import (
     ModularCorrelationAnalyzer,
     build_default_analyzer,
 )
-from batteryml.train_test_split.MATR_split import MATRPrimaryTestTrainTestSplitter
+from batteryml.train_test_split.MATR_split import MATRPrimaryTestTrainTestSplitter, MATRSecondaryTestTrainTestSplitter, MATRCLOTestTrainTestSplitter
 from batteryml.train_test_split.random_split import RandomTrainTestSplitter
 from batteryml.train_test_split.CRUH_split import CRUHTrainTestSplitter
 from batteryml.train_test_split.CRUSH_split import CRUSHTrainTestSplitter
@@ -54,30 +54,37 @@ def build_train_test_lists(dataset: str, data_path: str | List[str], seed: int =
         paths = data_path
     else:
         paths = [str(Path(data_path))]
-    if dataset.upper() == 'MATR':
+    ds = dataset.upper()
+    if ds == 'MATR' or ds == 'MATR1':
         splitter = MATRPrimaryTestTrainTestSplitter(paths)
         train_files, test_files = splitter.split()
-    elif dataset.upper() == 'CALCE':
+    elif ds == 'MATR2':
+        splitter = MATRSecondaryTestTrainTestSplitter(paths)
+        train_files, test_files = splitter.split()
+    elif ds == 'CLO':
+        splitter = MATRCLOTestTrainTestSplitter(paths)
+        train_files, test_files = splitter.split()
+    elif ds == 'CALCE':
         # Use a reproducible random split for CALCE
         splitter = RandomTrainTestSplitter(paths, seed=seed, train_test_split_ratio=0.7)
         train_files, test_files = splitter.split()
-    elif dataset.upper() == 'CRUH':
+    elif ds == 'CRUH':
         splitter = CRUHTrainTestSplitter(paths)
         train_files, test_files = splitter.split()
-    elif dataset.upper() == 'CRUSH':
+    elif ds == 'CRUSH':
         splitter = CRUSHTrainTestSplitter(paths)
         train_files, test_files = splitter.split()
-    elif dataset.upper() == 'HUST':
+    elif ds == 'HUST':
         splitter = HUSTTrainTestSplitter(paths)
         train_files, test_files = splitter.split()
-    elif dataset.upper() == 'SNL':
+    elif ds == 'SNL':
         splitter = SNLTrainTestSplitter(paths)
         train_files, test_files = splitter.split()
-    elif dataset.upper() == 'MIX100':
+    elif ds == 'MIX100':
         splitter = MIX100TrainTestSplitter(paths)
         train_files, test_files = splitter.split()
     else:
-        raise ValueError(f"Unsupported dataset: {dataset}. Expected one of ['MATR', 'CALCE', 'CRUH', 'CRUSH', 'HUST', 'SNL', 'MIX100'].")
+        raise ValueError(f"Unsupported dataset: {dataset}. Expected one of ['MATR','MATR1','MATR2','CLO','CALCE','CRUH','CRUSH','HUST','SNL','MIX100'].")
     return [Path(p) for p in train_files], [Path(p) for p in test_files]
 
 

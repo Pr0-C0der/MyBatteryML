@@ -417,7 +417,7 @@ def run(dataset: str, data_path: str, output_dir: str, window_size: int, feature
 
 def main():
     parser = argparse.ArgumentParser(description='RUL prediction with per-cycle features (windowed or battery-level)')
-    parser.add_argument('--dataset', type=str, required=True, choices=['MATR', 'CALCE', 'CRUH', 'CRUSH', 'HUST', 'SNL', 'MIX100'], help='Dataset name')
+    parser.add_argument('--dataset', type=str, required=True, choices=['MATR', 'MATR1', 'MATR2', 'CLO', 'CALCE', 'CRUH', 'CRUSH', 'HUST', 'SNL', 'MIX100'], help='Dataset name')
     parser.add_argument('--data_path', type=str, nargs='+', required=True, help='One or more paths: directories with .pkl or a file listing .pkl paths')
     parser.add_argument('--output_dir', type=str, default='rul_windows', help='Output directory')
     parser.add_argument('--window_size', type=int, default=100, help='Number of past cycles in each window')
