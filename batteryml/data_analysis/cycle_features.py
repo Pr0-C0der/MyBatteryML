@@ -68,6 +68,30 @@ def max_charge_capacity(b: BatteryData, c) -> Optional[float]:
     return float(m) if np.isfinite(m) else None
 
 
+def avg_discharge_capacity(b: BatteryData, c) -> Optional[float]:
+    Qd = getattr(c, 'discharge_capacity_in_Ah', None)
+    if Qd is None:
+        return None
+    Qd = np.array(Qd)
+    Qd = Qd[np.isfinite(Qd)]
+    if Qd.size == 0:
+        return None
+    v = float(np.mean(Qd))
+    return v if np.isfinite(v) else None
+
+
+def avg_charge_capacity(b: BatteryData, c) -> Optional[float]:
+    Qc = getattr(c, 'charge_capacity_in_Ah', None)
+    if Qc is None:
+        return None
+    Qc = np.array(Qc)
+    Qc = Qc[np.isfinite(Qc)]
+    if Qc.size == 0:
+        return None
+    v = float(np.mean(Qc))
+    return v if np.isfinite(v) else None
+
+
 def charge_cycle_length(b: BatteryData, c) -> Optional[float]:
     t = getattr(c, 'time_in_s', None)
     if t is None:
