@@ -233,18 +233,25 @@ def _prepare_dataset_battery_level(files: List[Path], feature_fns: Dict[str, cal
 def _build_models(use_gpu: bool = False) -> Dict[str, Pipeline]:
     models: Dict[str, Pipeline] = {}
     base_steps = [('imputer', SimpleImputer(strategy='median')), ('scaler', StandardScaler())]
-    # Prefer cuML implementations when available and GPU requested
-    if use_gpu and _HAS_CUML:
+
+    # Determine if GPU is truly available (even if --gpu passed)
+    gpu_available = False
+    if use_gpu:
+        try:
+            import torch  # type: ignore
+            gpu_available = bool(getattr(torch, 'cuda', None) and torch.cuda.is_available())
+        except Exception:
+            gpu_available = False
+
+    # Prefer cuML implementations only when GPU is available
+    if gpu_available and _HAS_CUML:
         from cuml.linear_model import LinearRegression as cuLinearRegression, Ridge as cuRidge, ElasticNet as cuElasticNet
         from cuml.svm import SVR as cuSVR
         from cuml.ensemble import RandomForestRegressor as cuRF
-        # Linear models (GPU)
         models['linear_regression'] = Pipeline(base_steps + [('model', cuLinearRegression())])
         models['ridge'] = Pipeline(base_steps + [('model', cuRidge())])
         models['elastic_net'] = Pipeline(base_steps + [('model', cuElasticNet())])
-        # Kernel
         models['svr_rbf'] = Pipeline(base_steps + [('model', cuSVR(kernel='rbf', C=10.0))])
-        # Trees
         models['random_forest'] = Pipeline(base_steps + [('model', cuRF(n_estimators=40, random_state=42))])
     else:
         # Linear models (CPU)
@@ -260,14 +267,26 @@ def _build_models(use_gpu: bool = False) -> Dict[str, Pipeline]:
     models['mlp'] = Pipeline(base_steps + [('model', MLPRegressor(hidden_layer_sizes=(128, 64), activation='relu', batch_size=256, max_iter=300, random_state=42))])
     # XGBoost
     if _HAS_XGB:
-        models['xgboost'] = Pipeline(base_steps + [('model', XGBRegressor(n_estimators=600, max_depth=6, learning_rate=0.05, subsample=0.9, colsample_bytree=0.9, random_state=42, n_jobs=-1, tree_method='hist', device=('cuda' if use_gpu else 'cpu')))])
+        # Use CUDA only if GPU is truly available
+        xgb_device = 'cuda' if gpu_available else 'cpu'
+        models['xgboost'] = Pipeline(base_steps + [('model', XGBRegressor(
+            n_estimators=600,
+            max_depth=6,
+            learning_rate=0.05,
+            subsample=0.9,
+            colsample_bytree=0.9,
+            random_state=42,
+            n_jobs=-1,
+            tree_method='hist',
+            device=xgb_device
+        ))])
     # PLSR
     models['plsr'] = Pipeline(base_steps + [('model', PLSRegression(n_components=10))])
     # PCR (PCA + Linear)
     models['pcr'] = Pipeline(base_steps + [('model', Pipeline([('pca', PCA(n_components=20)), ('lr', LinearRegression())]))])
 
     # Optional: GPyTorch SVGP (GPU scalable GP)
-    if use_gpu and _HAS_GPYTORCH:
+    if gpu_available and _HAS_GPYTORCH:
         class _SVGPRegressor:
             def __init__(self, inducing_points: int = 1024, batch_size: int = 2048, iters: int = 1500, lr: float = 1e-2):
                 self.m = int(inducing_points)
