@@ -232,7 +232,15 @@ def _prepare_dataset(
             Xs.append(Xw)
             ys.append(yw)
     if not Xs:
-        return np.zeros((0, len(feature_names) * window_size), dtype=float), np.zeros((0,), dtype=float)
+        # Determine a safe feature width for empty result
+        if window_size is not None:
+            width = len(feature_names) * int(window_size)
+        elif (min_cycle_index is not None) and (max_cycle_index is not None):
+            span = int(max(0, (max_cycle_index - min_cycle_index + 1)))
+            width = len(feature_names) * span
+        else:
+            width = 0
+        return np.zeros((0, width), dtype=float), np.zeros((0,), dtype=float)
     X = np.vstack(Xs)
     y = np.concatenate(ys)
     return X, y
