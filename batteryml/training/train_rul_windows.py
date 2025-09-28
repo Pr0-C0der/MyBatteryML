@@ -101,7 +101,7 @@ def _make_windows(
     df: pd.DataFrame,
     feature_names: List[str],
     total_rul: int,
-    window_size: int,
+    window_size: Optional[int],
     min_cycle_index: Optional[int] = None,
     max_cycle_index: Optional[int] = None,
     battery_level: bool = False,
@@ -122,44 +122,67 @@ def _make_windows(
     X_list: List[np.ndarray] = []
     y_list: List[float] = []
     num_cycles = len(dfn)
-    # Window targets the next cycle's RUL: cycles [k, k+N-1] -> target at (k+N)
-    last_start = num_cycles - (window_size + 1)
-    if last_start < 0:
-        return np.zeros((0, len(cols) * window_size), dtype=float), np.zeros((0,), dtype=float)
-
     feat_mat = dfn[cols].to_numpy()  # shape [num_cycles, num_feats]
 
     if battery_level:
         # Pick a single window ending at the cutoff (prefer max_cycle_index if provided, else the last available)
-        if max_cycle_index is not None:
-            # target index is the window end index (k+window_size-1) equal to max_cycle_index
-            target_end_idx = int(max_cycle_index)
-            # map to local index in dfn: since dfn was filtered, the last row should correspond to max_cycle_index
-            # compute start so that end == target_end_idx relative to original numbering
-            # find row where cycle_number == target_end_idx
-            mask = (dfn['cycle_number'].astype(float) == float(target_end_idx))
-            if not mask.any():
-                # fallback: use the last available end
-                k = last_start
-            else:
-                end_loc = int(np.where(mask.values)[0][0])  # local index of end
-                k = end_loc - (window_size - 1)
-                if k < 0:
-                    k = 0
-                if k > last_start:
-                    k = last_start
-        else:
-            k = last_start
-
-        w = feat_mat[k:k + window_size, :]
-        x = w.reshape(-1)
         if battery_label_mode == 'total_life':
-            # predict total lifetime from start
-            yval = float(total_rul)
+            # Determine desired number of cycles in the vector
+            desired_len: Optional[int] = None
+            if (min_cycle_index is not None) and (max_cycle_index is not None):
+                desired_len = int(max(0, (max_cycle_index - min_cycle_index + 1)))
+            elif window_size is not None:
+                desired_len = int(window_size)
+            else:
+                # Cannot determine a consistent vector length across batteries
+                return np.zeros((0, 0), dtype=float), np.zeros((0,), dtype=float)
+
+            if desired_len <= 0:
+                return np.zeros((0, 0), dtype=float), np.zeros((0,), dtype=float)
+
+            # Take available cycles (already filtered) and pad/truncate to desired_len
+            if num_cycles >= desired_len:
+                w = feat_mat[:desired_len, :]
+            else:
+                pad_rows = desired_len - num_cycles
+                pad = np.full((pad_rows, feat_mat.shape[1]), np.nan, dtype=float)
+                w = np.vstack([feat_mat, pad])
+
+            x = w.reshape(-1)
+            yval = float(total_rul)  # total life from start
+            return x.reshape(1, -1), np.array([yval], dtype=float)
         else:
-            # predict RUL at cutoff (next step after window)
+            # rul_at_cutoff requires a next-cycle target; compute k and enforce availability
+            if window_size is None:
+                return np.zeros((0, 0), dtype=float), np.zeros((0,), dtype=float)
+            last_start = num_cycles - (window_size + 1)
+            if last_start < 0:
+                return np.zeros((0, len(cols) * window_size), dtype=float), np.zeros((0,), dtype=float)
+            if max_cycle_index is not None:
+                target_end_idx = int(max_cycle_index)
+                mask = (dfn['cycle_number'].astype(float) == float(target_end_idx))
+                if not mask.any():
+                    k = last_start
+                else:
+                    end_loc = int(np.where(mask.values)[0][0])
+                    k = end_loc - (window_size - 1)
+                    if k < 0:
+                        k = 0
+                    if k > last_start:
+                        k = last_start
+            else:
+                k = last_start
+            w = feat_mat[k:k + window_size, :]
+            x = w.reshape(-1)
             yval = float(max(0, total_rul - (k + window_size)))
-        return x.reshape(1, -1), np.array([yval], dtype=float)
+            return x.reshape(1, -1), np.array([yval], dtype=float)
+
+    # Sliding window mode (per-window samples)
+    if window_size is None:
+        return np.zeros((0, 0), dtype=float), np.zeros((0,), dtype=float)
+    last_start = num_cycles - (window_size + 1)
+    if last_start < 0:
+        return np.zeros((0, len(cols) * window_size), dtype=float), np.zeros((0,), dtype=float)
 
     for k in range(0, last_start + 1):
         w = feat_mat[k:k + window_size, :]  # [N, F]
@@ -179,7 +202,7 @@ def _prepare_dataset(
     files: List[Path],
     feature_fns: Dict[str, callable],
     feature_names: List[str],
-    window_size: int,
+    window_size: Optional[int],
     progress_desc: str = 'Building windows',
     min_cycle_index: Optional[int] = None,
     max_cycle_index: Optional[int] = None,
@@ -336,7 +359,7 @@ def run(
     dataset: str,
     data_path: str,
     output_dir: str,
-    window_size: int,
+    window_size: Optional[int],
     features: Optional[List[str]] = None,
     use_gpu: bool = False,
     min_cycle_index: Optional[int] = None,
@@ -420,7 +443,7 @@ def main():
     parser.add_argument('--dataset', type=str, required=True, choices=['MATR', 'CALCE', 'CRUH', 'CRUSH', 'HUST', 'SNL', 'MIX100'], help='Dataset name')
     parser.add_argument('--data_path', type=str, nargs='+', required=True, help='One or more paths: directories with .pkl or a file listing .pkl paths')
     parser.add_argument('--output_dir', type=str, default='rul_windows', help='Output directory')
-    parser.add_argument('--window_size', type=int, default=100, help='Number of past cycles in each window')
+    parser.add_argument('--window_size', type=int, default=None, help='Number of past cycles in each window (omit in battery-level total_life to use [min,max] range)')
     parser.add_argument('--features', type=str, nargs='*', default=['default'],
                         help="Which features to use: 'default', 'all', or list like avg_voltage avg_current ...")
     parser.add_argument('--gpu', action='store_true', help='Enable GPU acceleration for XGBoost if available')
