@@ -97,9 +97,23 @@ def _build_cycle_feature_table(battery: BatteryData, feature_fns: Dict[str, call
     return pd.DataFrame(rows)
 
 
-def _make_windows(df: pd.DataFrame, feature_names: List[str], total_rul: int, window_size: int) -> Tuple[np.ndarray, np.ndarray]:
+def _make_windows(
+    df: pd.DataFrame,
+    feature_names: List[str],
+    total_rul: int,
+    window_size: int,
+    min_cycle_index: Optional[int] = None,
+    max_cycle_index: Optional[int] = None,
+    battery_level: bool = False,
+    battery_label_mode: str = 'rul_at_cutoff',  # 'rul_at_cutoff' or 'total_life'
+) -> Tuple[np.ndarray, np.ndarray]:
     # df must be sorted by cycle_number ascending
     dfn = df.sort_values('cycle_number').reset_index(drop=True)
+    # Apply optional cycle bounds (early-life filtering)
+    if min_cycle_index is not None or max_cycle_index is not None:
+        lo = -np.inf if min_cycle_index is None else float(min_cycle_index)
+        hi = np.inf if max_cycle_index is None else float(max_cycle_index)
+        dfn = dfn[(dfn['cycle_number'] >= lo) & (dfn['cycle_number'] <= hi)].reset_index(drop=True)
     # Ensure features present
     cols = [c for c in feature_names if c in dfn.columns]
     if not cols:
@@ -114,6 +128,39 @@ def _make_windows(df: pd.DataFrame, feature_names: List[str], total_rul: int, wi
         return np.zeros((0, len(cols) * window_size), dtype=float), np.zeros((0,), dtype=float)
 
     feat_mat = dfn[cols].to_numpy()  # shape [num_cycles, num_feats]
+
+    if battery_level:
+        # Pick a single window ending at the cutoff (prefer max_cycle_index if provided, else the last available)
+        if max_cycle_index is not None:
+            # target index is the window end index (k+window_size-1) equal to max_cycle_index
+            target_end_idx = int(max_cycle_index)
+            # map to local index in dfn: since dfn was filtered, the last row should correspond to max_cycle_index
+            # compute start so that end == target_end_idx relative to original numbering
+            # find row where cycle_number == target_end_idx
+            mask = (dfn['cycle_number'].astype(float) == float(target_end_idx))
+            if not mask.any():
+                # fallback: use the last available end
+                k = last_start
+            else:
+                end_loc = int(np.where(mask.values)[0][0])  # local index of end
+                k = end_loc - (window_size - 1)
+                if k < 0:
+                    k = 0
+                if k > last_start:
+                    k = last_start
+        else:
+            k = last_start
+
+        w = feat_mat[k:k + window_size, :]
+        x = w.reshape(-1)
+        if battery_label_mode == 'total_life':
+            # predict total lifetime from start
+            yval = float(total_rul)
+        else:
+            # predict RUL at cutoff (next step after window)
+            yval = float(max(0, total_rul - (k + window_size)))
+        return x.reshape(1, -1), np.array([yval], dtype=float)
+
     for k in range(0, last_start + 1):
         w = feat_mat[k:k + window_size, :]  # [N, F]
         # If any row is all NaN, imputer will handle later; leave NaN as np.nan
@@ -128,7 +175,17 @@ def _make_windows(df: pd.DataFrame, feature_names: List[str], total_rul: int, wi
     return X, y
 
 
-def _prepare_dataset(files: List[Path], feature_fns: Dict[str, callable], feature_names: List[str], window_size: int, progress_desc: str = 'Building windows') -> Tuple[np.ndarray, np.ndarray]:
+def _prepare_dataset(
+    files: List[Path],
+    feature_fns: Dict[str, callable],
+    feature_names: List[str],
+    window_size: int,
+    progress_desc: str = 'Building windows',
+    min_cycle_index: Optional[int] = None,
+    max_cycle_index: Optional[int] = None,
+    battery_level: bool = False,
+    battery_label_mode: str = 'rul_at_cutoff',
+) -> Tuple[np.ndarray, np.ndarray]:
     Xs: List[np.ndarray] = []
     ys: List[np.ndarray] = []
     for f in tqdm(files, desc=progress_desc):
@@ -138,7 +195,16 @@ def _prepare_dataset(files: List[Path], feature_fns: Dict[str, callable], featur
             continue
         total_rul = _compute_total_rul(battery)
         df = _build_cycle_feature_table(battery, feature_fns)
-        Xw, yw = _make_windows(df, feature_names, total_rul, window_size)
+        Xw, yw = _make_windows(
+            df,
+            feature_names,
+            total_rul,
+            window_size,
+            min_cycle_index=min_cycle_index,
+            max_cycle_index=max_cycle_index,
+            battery_level=battery_level,
+            battery_label_mode=battery_label_mode,
+        )
         if Xw.size and yw.size:
             Xs.append(Xw)
             ys.append(yw)
@@ -266,7 +332,18 @@ def _build_models(use_gpu: bool = False) -> Dict[str, Pipeline]:
     return models
 
 
-def run(dataset: str, data_path: str, output_dir: str, window_size: int, features: Optional[List[str]] = None, use_gpu: bool = False):
+def run(
+    dataset: str,
+    data_path: str,
+    output_dir: str,
+    window_size: int,
+    features: Optional[List[str]] = None,
+    use_gpu: bool = False,
+    min_cycle_index: Optional[int] = None,
+    max_cycle_index: Optional[int] = None,
+    battery_level: bool = False,
+    battery_label_mode: str = 'rul_at_cutoff',
+):
     out_dir = Path(output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -301,8 +378,22 @@ def run(dataset: str, data_path: str, output_dir: str, window_size: int, feature
     feature_fns = {n: all_fns[n] for n in feature_names if n in all_fns}
 
     # Build datasets
-    X_train, y_train = _prepare_dataset(train_files, feature_fns, feature_names, window_size, progress_desc='Building train windows')
-    X_test, y_test = _prepare_dataset(test_files, feature_fns, feature_names, window_size, progress_desc='Building test windows')
+    X_train, y_train = _prepare_dataset(
+        train_files, feature_fns, feature_names, window_size,
+        progress_desc='Building train windows',
+        min_cycle_index=min_cycle_index,
+        max_cycle_index=max_cycle_index,
+        battery_level=battery_level,
+        battery_label_mode=battery_label_mode,
+    )
+    X_test, y_test = _prepare_dataset(
+        test_files, feature_fns, feature_names, window_size,
+        progress_desc='Building test windows',
+        min_cycle_index=min_cycle_index,
+        max_cycle_index=max_cycle_index,
+        battery_level=battery_level,
+        battery_label_mode=battery_label_mode,
+    )
 
     if X_train.size == 0 or X_test.size == 0:
         print("No data available after windowing. Aborting.")
@@ -333,9 +424,24 @@ def main():
     parser.add_argument('--features', type=str, nargs='*', default=['default'],
                         help="Which features to use: 'default', 'all', or list like avg_voltage avg_current ...")
     parser.add_argument('--gpu', action='store_true', help='Enable GPU acceleration for XGBoost if available')
+    parser.add_argument('--min_cycle_index', type=int, default=None, help='Minimum cycle index to include (early-life filter)')
+    parser.add_argument('--max_cycle_index', type=int, default=None, help='Maximum cycle index to include (early-life filter)')
+    parser.add_argument('--battery_level', action='store_true', help='Use one early window per battery to predict a single scalar RUL per battery')
+    parser.add_argument('--battery_label_mode', type=str, choices=['rul_at_cutoff', 'total_life'], default='rul_at_cutoff', help='Battery-level label: RUL at cutoff or total life from start')
     args = parser.parse_args()
 
-    run(args.dataset, args.data_path, args.output_dir, args.window_size, features=args.features, use_gpu=args.gpu)
+    run(
+        args.dataset,
+        args.data_path,
+        args.output_dir,
+        args.window_size,
+        features=args.features,
+        use_gpu=args.gpu,
+        min_cycle_index=args.min_cycle_index,
+        max_cycle_index=args.max_cycle_index,
+        battery_level=args.battery_level,
+        battery_label_mode=args.battery_label_mode,
+    )
 
 
 if __name__ == '__main__':
