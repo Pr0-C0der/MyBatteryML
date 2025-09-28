@@ -424,8 +424,8 @@ def main():
     parser.add_argument('--features', type=str, nargs='*', default=['default'],
                         help="Which features to use: 'default', 'all', or list like avg_voltage avg_current ...")
     parser.add_argument('--gpu', action='store_true', help='Enable GPU acceleration for XGBoost if available')
-    parser.add_argument('--min_cycle_index', type=int, default=None, help='Minimum cycle index to include (early-life filter)')
-    parser.add_argument('--max_cycle_index', type=int, default=None, help='Maximum cycle index to include (early-life filter)')
+    parser.add_argument('--min_cycle_index', type=int, default=0, help='Minimum cycle index to include (early-life filter)')
+    parser.add_argument('--max_cycle_index', type=int, default=101, help='Maximum cycle index to include (early-life filter)')
     parser.add_argument('--battery_level', action='store_true', help='Use one early window per battery to predict a single scalar RUL per battery')
     parser.add_argument('--battery_label_mode', type=str, choices=['rul_at_cutoff', 'total_life'], default='rul_at_cutoff', help='Battery-level label: RUL at cutoff or total life from start')
     args = parser.parse_args()
