@@ -1,0 +1,1 @@
+python -m batteryml.training.train_rul_combined_vc_scalar --dataset SNL --data_path data/preprocessed/SNL --cycle_limit 100 --diff_base 9 --tune --cv_splits 5 --verbose
