@@ -472,14 +472,14 @@ def run(dataset: str, data_path: str, output_dir: str, window_size: int, feature
             elif name == 'svr':
                 param_grid = {
                     'model__kernel': ['rbf', 'linear', 'poly', 'sigmoid'],
-                    'model__C': [1.0, 10.0, 100.0, 1000.0],
+                    'model__C': [0.001, 0.01, 0.1, 1.0],
                     'model__gamma': ['scale', 'auto', 0.1, 0.01, 0.001],
                     'model__epsilon': [0.05, 0.1, 0.2],
                     'model__degree': [2, 3, 4],
                 }
             elif name == 'random_forest':
                 param_grid = {
-                    'model__n_estimators': [200, 400, 800, 1200],
+                    'model__n_estimators': [200, 400, 800],
                     'model__max_depth': [None, 10, 20, 40, 80],
                     'model__min_samples_split': [2, 5, 10],
                     'model__min_samples_leaf': [1, 2, 4],
@@ -487,14 +487,11 @@ def run(dataset: str, data_path: str, output_dir: str, window_size: int, feature
                 }
             elif name == 'xgboost':
                 param_grid = {
-                    'model__n_estimators': [300, 600, 1000],
-                    'model__max_depth': [4, 6, 8],
-                    'model__learning_rate': [0.03, 0.05, 0.1],
-                    'model__subsample': [0.7, 0.8, 0.9, 1.0],
-                    'model__colsample_bytree': [0.7, 0.9, 1.0],
-                    'model__min_child_weight': [1, 3, 5],
+                    'model__n_estimators': [300, 600],
+                    'model__max_depth': [4, 6, 8, 10, 20],
+                    'model__learning_rate': [0.001, 0.01, 0.05, 0.1],
                     'model__reg_alpha': [0.0, 0.001, 0.01],
-                    'model__reg_lambda': [1.0, 5.0, 10.0],
+                    'model__reg_lambda': [1.0, 5.0, 10.0]
                 }
             elif name == 'mlp':
                 param_grid = {
