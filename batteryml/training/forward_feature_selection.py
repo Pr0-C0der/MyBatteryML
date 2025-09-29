@@ -218,7 +218,7 @@ def forward_select_linear(dataset: str, data_path: List[str], cycle_limit: int, 
                 Xtr, Xva = X_tr[tr_idx], X_tr[va_idx]
                 ytr_t, yva = y_tr_t[tr_idx], y_tr[va_idx]
                 model = Pipeline([
-                    ('imputer', SimpleImputer(strategy='median')),
+                    ('imputer', SimpleImputer(strategy='constant', fill_value=0.0)),
                     ('model', _make_lr_estimator(use_gpu)),
                 ])
                 model.fit(Xtr, ytr_t)
@@ -245,7 +245,7 @@ def forward_select_linear(dataset: str, data_path: List[str], cycle_limit: int, 
         X_tr_full, y_tr_full, _ = _assemble_dataset(train_tables, train_files, selected, cycle_limit)
         y_tr_t_full, stats_full = _fit_label_transform(y_tr_full)
         model_full = Pipeline([
-            ('imputer', SimpleImputer(strategy='median')),
+            ('imputer', SimpleImputer(strategy='constant', fill_value=0.0)),
             ('model', _make_lr_estimator(use_gpu)),
         ])
         model_full.fit(X_tr_full, y_tr_t_full)
