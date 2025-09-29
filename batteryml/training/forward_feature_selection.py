@@ -22,6 +22,7 @@ from batteryml.label.rul import RULLabelAnnotator
 
 def _available_feature_fns() -> Dict[str, callable]:
     names = [
+        'avg_voltage', 'avg_current',
         'avg_c_rate', 'max_temperature', 'max_discharge_capacity', 'max_charge_capacity',
         'avg_discharge_capacity', 'avg_charge_capacity',
         'charge_cycle_length', 'discharge_cycle_length', 'peak_cv_length',

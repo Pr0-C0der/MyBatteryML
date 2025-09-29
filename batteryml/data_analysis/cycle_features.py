@@ -92,6 +92,36 @@ def avg_charge_capacity(b: BatteryData, c) -> Optional[float]:
     return v if np.isfinite(v) else None
 
 
+def avg_voltage(b: BatteryData, c) -> Optional[float]:
+    V = getattr(c, 'voltage_in_V', None)
+    if V is None:
+        return None
+    try:
+        arr = np.array(V)
+        arr = arr[np.isfinite(arr)]
+        if arr.size == 0:
+            return None
+        v = float(np.mean(arr))
+        return v if np.isfinite(v) else None
+    except Exception:
+        return None
+
+
+def avg_current(b: BatteryData, c) -> Optional[float]:
+    I = getattr(c, 'current_in_A', None)
+    if I is None:
+        return None
+    try:
+        arr = np.array(I)
+        arr = arr[np.isfinite(arr)]
+        if arr.size == 0:
+            return None
+        v = float(np.mean(arr))
+        return v if np.isfinite(v) else None
+    except Exception:
+        return None
+
+
 def charge_cycle_length(b: BatteryData, c) -> Optional[float]:
     t = getattr(c, 'time_in_s', None)
     if t is None:
