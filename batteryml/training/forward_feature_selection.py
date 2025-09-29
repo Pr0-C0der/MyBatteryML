@@ -182,7 +182,8 @@ def forward_select_linear(dataset: str, data_path: List[str], cycle_limit: int, 
         # Choose best next feature via GroupKFold RMSE on train
         best_feat = None
         best_cv_rmse = np.inf
-        for feat in remaining:
+        feat_pbar = tqdm(remaining, desc=f"Iter {iter_idx}: trying features", leave=False)
+        for feat in feat_pbar:
             trial_feats = selected + [feat]
             X_tr, y_tr, g_tr = _assemble_dataset(train_tables, train_files, trial_feats, cycle_limit)
             if X_tr.size == 0:
@@ -191,7 +192,7 @@ def forward_select_linear(dataset: str, data_path: List[str], cycle_limit: int, 
             y_tr_t, stats = _fit_label_transform(y_tr)
             cv = GroupKFold(n_splits=min(cv_splits, max(2, len(np.unique(g_tr)))))
             rmses = []
-            for tr_idx, va_idx in cv.split(X_tr, y_tr_t, groups=g_tr):
+            for tr_idx, va_idx in tqdm(list(cv.split(X_tr, y_tr_t, groups=g_tr)), desc=f"CV {feat}", leave=False):
                 Xtr, Xva = X_tr[tr_idx], X_tr[va_idx]
                 ytr_t, yva = y_tr_t[tr_idx], y_tr[va_idx]
                 model = Pipeline([
@@ -204,6 +205,7 @@ def forward_select_linear(dataset: str, data_path: List[str], cycle_limit: int, 
                 rmse = mean_squared_error(yva, pred) ** 0.5
                 rmses.append(float(rmse))
             mean_rmse = float(np.mean(rmses)) if rmses else np.inf
+            feat_pbar.set_postfix({"rmse": f"{mean_rmse:.3f}"})
             if mean_rmse < best_cv_rmse:
                 best_cv_rmse = mean_rmse
                 best_feat = feat
