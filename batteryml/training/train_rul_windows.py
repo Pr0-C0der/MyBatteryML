@@ -427,6 +427,26 @@ def run(dataset: str, data_path: str, output_dir: str, window_size: int, feature
     else:
         print(f"Train windows: {X_train.shape}, Test windows: {X_test.shape}, Features: {len(feature_names)} × window {window_size}")
 
+    # ----------------------
+    # Label transformations
+    # ----------------------
+    def _fit_label_transform(y: np.ndarray) -> tuple[np.ndarray, dict]:
+        y = np.asarray(y, dtype=float)
+        yt = np.log1p(np.clip(y, a_min=0.0, a_max=None))  # log1p
+        mu = float(np.mean(yt))
+        sigma = float(np.std(yt)) if np.std(yt) > 1e-6 else 1e-6
+        yt = (yt - mu) / sigma
+        return yt, {'mu': mu, 'sigma': sigma}
+
+    def _inverse_label_transform(yt: np.ndarray, stats: dict) -> np.ndarray:
+        mu = stats['mu']; sigma = stats['sigma']
+        y_log = yt * sigma + mu
+        y = np.expm1(y_log)
+        return np.clip(y, a_min=0.0, a_max=None)
+
+    # Fit transform on full training labels for final model
+    y_train_t, train_label_stats = _fit_label_transform(y_train)
+
     models = _build_models(use_gpu=use_gpu)
     rows = []
     for name, pipe in models.items():
@@ -470,11 +490,14 @@ def run(dataset: str, data_path: str, output_dir: str, window_size: int, feature
                     for tr_idx, va_idx in cv.split(X_train, y_train, groups=g_train):
                         X_tr, X_va = X_train[tr_idx], X_train[va_idx]
                         y_tr, y_va = y_train[tr_idx], y_train[va_idx]
+                        # Fit label transform on training fold
+                        y_tr_t, fold_stats = _fit_label_transform(y_tr)
                         model = clone(pipe)
                         model.set_params(**params)
-                        model.fit(X_tr, y_tr)
-                        pred = model.predict(X_va)
-                        fold_maes.append(mean_absolute_error(y_va, pred))
+                        model.fit(X_tr, y_tr_t)
+                        pred_t = model.predict(X_va)
+                        pred = _inverse_label_transform(np.asarray(pred_t, dtype=float), fold_stats)
+                        fold_maes.append(mean_absolute_error(y_va, np.asarray(pred, dtype=float)))
                     mean_mae = float(np.mean(fold_maes)) if fold_maes else np.inf
                     results.append({**{f"param:{k}": v for k, v in params.items()}, 'mean_MAE': mean_mae})
                     pbar.set_postfix({"MAE": f"{mean_mae:.3f}"})
@@ -488,9 +511,12 @@ def run(dataset: str, data_path: str, output_dir: str, window_size: int, feature
                 cv_path = Path(output_dir) / f"{dataset.upper()}_{name}_cv_results.csv"
                 pd.DataFrame(results).to_csv(cv_path, index=False)
 
-        if best_params is None:
-            est.fit(X_train, y_train)
-        y_pred = est.predict(X_test)
+        # Rebuild estimator with best params (if any) and ALWAYS fit on full train set (transformed labels)
+        if best_params is not None:
+            est = clone(pipe).set_params(**best_params)
+        est.fit(X_train, y_train_t)
+        y_pred_t = est.predict(X_test)
+        y_pred = _inverse_label_transform(np.asarray(y_pred_t, dtype=float), train_label_stats)
         mae = mean_absolute_error(y_test, y_pred)
         rmse = mean_squared_error(y_test, y_pred) ** 0.5
         row = {'model': name, 'MAE': float(mae), 'RMSE': float(rmse)}
