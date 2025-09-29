@@ -503,7 +503,7 @@ def run(dataset: str, data_path: str, output_dir: str, window_size: int, feature
                     'model__learning_rate_init': [0.0005, 0.001, 0.01],
                     'model__activation': ['relu', 'tanh'],
                     'model__batch_size': [128, 256, 512],
-                    'model__max_iter': [300],
+                    'model__max_iter': [300, 900, 2000],
                 }
             elif name == 'plsr':
                 param_grid = {
