@@ -467,7 +467,7 @@ def run(dataset: str, data_path: str, output_dir: str, window_size: int, feature
                 param_grid = {
                     'model__alpha': [1e-4, 1e-3, 1e-2, 1e-1],
                     'model__l1_ratio': [0.1, 0.3, 0.5, 0.7, 0.9],
-                    'model__max_iter': [5000, 10000],
+                    'model__max_iter': [5000, 10000, 50000],
                 }
             elif name == 'svr':
                 param_grid = {
