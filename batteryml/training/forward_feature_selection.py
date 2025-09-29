@@ -19,6 +19,20 @@ from batteryml.training.train_rul_baselines import build_train_test_lists
 from batteryml.data_analysis import cycle_features as cf
 from batteryml.label.rul import RULLabelAnnotator
 
+# Optional RAPIDS cuML (GPU)
+try:
+    import cuml  # noqa: F401
+    _HAS_CUML = True
+except Exception:
+    _HAS_CUML = False
+
+
+def _make_lr_estimator(use_gpu: bool):
+    if use_gpu and _HAS_CUML:
+        from cuml.linear_model import LinearRegression as cuLinearRegression
+        return cuLinearRegression()
+    return LinearRegression()
+
 
 def _available_feature_fns() -> Dict[str, callable]:
     names = [
@@ -153,7 +167,7 @@ def _assemble_dataset(feature_tables: Dict[str, pd.DataFrame], files: List[Path]
     return X, y, g
 
 
-def forward_select_linear(dataset: str, data_path: List[str], cycle_limit: int, pool_features: List[str], cv_splits: int = 5, verbose: bool = True):
+def forward_select_linear(dataset: str, data_path: List[str], cycle_limit: int, pool_features: List[str], cv_splits: int = 5, verbose: bool = True, use_gpu: bool = False):
     train_files, test_files = build_train_test_lists(dataset, data_path)
     if verbose:
         print(f"Found {len(train_files)} train and {len(test_files)} test batteries for {dataset}", flush=True)
@@ -197,7 +211,7 @@ def forward_select_linear(dataset: str, data_path: List[str], cycle_limit: int, 
                 ytr_t, yva = y_tr_t[tr_idx], y_tr[va_idx]
                 model = Pipeline([
                     ('imputer', SimpleImputer(strategy='median')),
-                    ('model', LinearRegression()),
+                    ('model', _make_lr_estimator(use_gpu)),
                 ])
                 model.fit(Xtr, ytr_t)
                 pred_t = model.predict(Xva)
@@ -224,7 +238,7 @@ def forward_select_linear(dataset: str, data_path: List[str], cycle_limit: int, 
         y_tr_t_full, stats_full = _fit_label_transform(y_tr_full)
         model_full = Pipeline([
             ('imputer', SimpleImputer(strategy='median')),
-            ('model', LinearRegression()),
+            ('model', _make_lr_estimator(use_gpu)),
         ])
         model_full.fit(X_tr_full, y_tr_t_full)
         X_te, y_te, _ = _assemble_dataset(test_tables, test_files, selected, cycle_limit)
@@ -256,6 +270,7 @@ def main():
     parser.add_argument('--features', type=str, nargs='*', default=['default'], help="Pool features: 'default', 'all', or explicit list")
     parser.add_argument('--cv_splits', type=int, default=5, help='GroupKFold splits for selection (default 5)')
     parser.add_argument('--verbose', action='store_true', help='Verbose output')
+    parser.add_argument('--gpu', action='store_true', help='Use cuML LinearRegression if available')
     args = parser.parse_args()
 
     # Build pool features
@@ -269,7 +284,7 @@ def main():
         if not pool:
             pool = _default_feature_names()
 
-    forward_select_linear(args.dataset, args.data_path, args.cycle_limit, pool, cv_splits=args.cv_splits, verbose=args.verbose)
+    forward_select_linear(args.dataset, args.data_path, args.cycle_limit, pool, cv_splits=args.cv_splits, verbose=args.verbose, use_gpu=args.gpu)
 
 
 if __name__ == '__main__':
