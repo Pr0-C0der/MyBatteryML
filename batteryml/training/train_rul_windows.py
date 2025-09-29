@@ -259,7 +259,7 @@ def _build_models(use_gpu: bool = False) -> Dict[str, Pipeline]:
         models['linear_regression'] = Pipeline(base_steps + [('model', cuLinearRegression())])
         models['ridge'] = Pipeline(base_steps + [('model', cuRidge())])
         models['elastic_net'] = Pipeline(base_steps + [('model', cuElasticNet())])
-        models['svr_rbf'] = Pipeline(base_steps + [('model', cuSVR(kernel='rbf', C=10.0))])
+        models['svr'] = Pipeline(base_steps + [('model', cuSVR(kernel='rbf', C=10.0))])
         models['random_forest'] = Pipeline(base_steps + [('model', cuRF(n_estimators=40, random_state=42))])
     else:
         # Linear models (CPU)
@@ -267,7 +267,7 @@ def _build_models(use_gpu: bool = False) -> Dict[str, Pipeline]:
         models['ridge'] = Pipeline(base_steps + [('model', Ridge(alpha=1.0))])
         models['elastic_net'] = Pipeline(base_steps + [('model', ElasticNet(alpha=0.001, l1_ratio=0.5, max_iter=10000))])
         # Kernel (CPU)
-        models['svr_rbf'] = Pipeline(base_steps + [('model', SVR(kernel='rbf', C=10.0, gamma='scale'))])
+        models['svr'] = Pipeline(base_steps + [('model', SVR(kernel='rbf', C=10.0, gamma='scale'))])
         # Trees (CPU)
         models['random_forest'] = Pipeline(base_steps + [('model', RandomForestRegressor(n_estimators=40, random_state=42, n_jobs=-1))])
     # (GradientBoosting removed)
@@ -456,6 +456,24 @@ def run(dataset: str, data_path: str, output_dir: str, window_size: int, feature
         if tune:
             if name == 'linear_regression':
                 param_grid = {'model__fit_intercept': [True, False]}
+            elif name == 'ridge':
+                param_grid = {
+                    'model__alpha': [0.1, 1.0, 10.0, 100.0],
+                    'model__fit_intercept': [True, False],
+                }
+            elif name == 'elastic_net':
+                param_grid = {
+                    'model__alpha': [1e-4, 1e-3, 1e-2],
+                    'model__l1_ratio': [0.2, 0.5, 0.8],
+                }
+            elif name == 'svr':
+                param_grid = {
+                    'model__kernel': ['rbf', 'linear', 'poly', 'sigmoid'],
+                    'model__C': [1.0, 10.0, 100.0],
+                    'model__gamma': ['scale', 0.01, 0.001],
+                    'model__epsilon': [0.1, 0.2],
+                    'model__degree': [2, 3],
+                }
             elif name == 'random_forest':
                 param_grid = {
                     'model__n_estimators': [200, 400, 800],
@@ -470,6 +488,29 @@ def run(dataset: str, data_path: str, output_dir: str, window_size: int, feature
                     'model__learning_rate': [0.03, 0.05, 0.1],
                     'model__subsample': [0.8, 0.9, 1.0],
                     'model__colsample_bytree': [0.8, 0.9, 1.0],
+                }
+            elif name == 'mlp':
+                param_grid = {
+                    'model__hidden_layer_sizes': [(128, 64), (256, 128)],
+                    'model__alpha': [1e-5, 1e-4],
+                    'model__learning_rate_init': [0.001, 0.01],
+                    'model__max_iter': [300],
+                }
+            elif name == 'plsr':
+                param_grid = {
+                    'model__n_components': [5, 10, 20],
+                }
+            elif name == 'pcr':
+                param_grid = {
+                    'model__pca__n_components': [10, 20, 40],
+                    'model__lr__fit_intercept': [True, False],
+                }
+            elif name == 'gpytorch_svgp':
+                param_grid = {
+                    'model__inducing_points': [256, 512],
+                    'model__batch_size': [512, 1024],
+                    'model__iters': [300, 600],
+                    'model__lr': [1e-2, 5e-3],
                 }
             else:
                 param_grid = {}
