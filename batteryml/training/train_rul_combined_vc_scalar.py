@@ -37,6 +37,7 @@ def _make_battery_vector_combined(
     diff_base: int,
     vc_cycle_average: Optional[int],
     verbose: bool,
+    scalar_features: Optional[List[str]],
 ) -> np.ndarray:
     ext = CombinedVCScalarFeatureExtractor(
         interp_dim=1000,
@@ -46,6 +47,7 @@ def _make_battery_vector_combined(
         use_precalculated_qdlin=False,
         smooth_enabled=True,
         cycle_average=vc_cycle_average,
+        scalar_features=scalar_features,
         verbose=verbose,
     )
     try:
@@ -84,6 +86,7 @@ def _prepare_dataset(
     vc_cycle_average: Optional[int],
     progress_desc: str,
     verbose: bool,
+    scalar_features: Optional[List[str]],
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
     Xs: List[np.ndarray] = []
     ys: List[float] = []
@@ -93,7 +96,7 @@ def _prepare_dataset(
             b = BatteryData.load(f)
         except Exception:
             continue
-        vec = _make_battery_vector_combined(b, cycle_limit, diff_base, vc_cycle_average, verbose)
+        vec = _make_battery_vector_combined(b, cycle_limit, diff_base, vc_cycle_average, verbose, scalar_features)
         if vec.size == 0:
             continue
         Xs.append(vec)
@@ -119,6 +122,7 @@ def run(
     tune: bool = False,
     cv_splits: int = 5,
     verbose: bool = False,
+    features: Optional[List[str]] = None,
 ):
     out_dir = Path(output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -126,8 +130,8 @@ def run(
     train_files, test_files = build_train_test_lists(dataset, data_path)
     print(f"Found {len(train_files)} train and {len(test_files)} test batteries for {dataset}.")
 
-    X_train, y_train, g_train = _prepare_dataset(train_files, cycle_limit, diff_base, vc_cycle_average, 'Building train combined vectors', verbose)
-    X_test, y_test, _ = _prepare_dataset(test_files, cycle_limit, diff_base, vc_cycle_average, 'Building test combined vectors', verbose)
+    X_train, y_train, g_train = _prepare_dataset(train_files, cycle_limit, diff_base, vc_cycle_average, 'Building train combined vectors', verbose, features)
+    X_test, y_test, _ = _prepare_dataset(test_files, cycle_limit, diff_base, vc_cycle_average, 'Building test combined vectors', verbose, features)
 
     if X_train.size == 0 or X_test.size == 0:
         print("No data available after feature building. Aborting.")
@@ -205,9 +209,11 @@ def main():
     parser.add_argument('--tune', action='store_true', help='Enable GroupKFold grid search for LinearRegression')
     parser.add_argument('--cv_splits', type=int, default=5, help='Number of GroupKFold splits')
     parser.add_argument('--verbose', action='store_true', help='Verbose logging from feature extractor')
+    parser.add_argument('--features', type=str, nargs='*', default=['default'], help="Scalar feature list: 'default' for built-in set, or names like avg_voltage avg_current ...")
     args = parser.parse_args()
 
-    run(args.dataset, args.data_path, args.output_dir, args.cycle_limit, diff_base=args.diff_base, vc_cycle_average=args.vc_cycle_average, tune=args.tune, cv_splits=args.cv_splits, verbose=args.verbose)
+    feats = None if (not args.features or args.features == ['default']) else args.features
+    run(args.dataset, args.data_path, args.output_dir, args.cycle_limit, diff_base=args.diff_base, vc_cycle_average=args.vc_cycle_average, tune=args.tune, cv_splits=args.cv_splits, verbose=args.verbose, features=feats)
 
 
 if __name__ == '__main__':
