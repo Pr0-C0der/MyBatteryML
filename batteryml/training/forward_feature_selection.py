@@ -9,6 +9,8 @@ import pandas as pd
 from tqdm import tqdm
 
 from sklearn.linear_model import LinearRegression
+from sklearn.impute import SimpleImputer
+from sklearn.pipeline import Pipeline
 from sklearn.model_selection import GroupKFold
 from sklearn.metrics import mean_squared_error
 
@@ -85,7 +87,10 @@ def _make_battery_vector(df: pd.DataFrame, selected_features: List[str], cycle_l
     else:
         pad = np.full((K - mat.shape[0], F), np.nan, dtype=float)
         matK = np.vstack([mat, pad])
-    return matK.reshape(-1)
+    vec = matK.reshape(-1)
+    # Replace non-finite with NaN for downstream imputation
+    vec[~np.isfinite(vec)] = np.nan
+    return vec
 
 
 def _fit_label_transform(y: np.ndarray) -> tuple[np.ndarray, dict]:
@@ -100,6 +105,9 @@ def _fit_label_transform(y: np.ndarray) -> tuple[np.ndarray, dict]:
 def _inverse_label_transform(yt: np.ndarray, stats: dict) -> np.ndarray:
     mu = stats['mu']; sigma = stats['sigma']
     y_log = yt * sigma + mu
+    # Clip to avoid overflow in expm1
+    clip_k = 5.0
+    y_log = np.clip(y_log, mu - clip_k * sigma, mu + clip_k * sigma)
     y = np.expm1(y_log)
     return np.clip(y, a_min=0.0, a_max=None)
 
@@ -137,6 +145,8 @@ def _assemble_dataset(feature_tables: Dict[str, pd.DataFrame], files: List[Path]
     if not X_list:
         return np.zeros((0, len(selected) * int(cycle_limit)), dtype=float), np.zeros((0,), dtype=float), np.zeros((0,), dtype=object)
     X = np.vstack([x.reshape(1, -1) for x in X_list])
+    # Replace any inf with NaN for imputation later
+    X[~np.isfinite(X)] = np.nan
     y = np.array(y_list, dtype=float)
     g = np.array(g_list, dtype=object)
     return X, y, g
@@ -183,7 +193,10 @@ def forward_select_linear(dataset: str, data_path: List[str], cycle_limit: int, 
             for tr_idx, va_idx in cv.split(X_tr, y_tr_t, groups=g_tr):
                 Xtr, Xva = X_tr[tr_idx], X_tr[va_idx]
                 ytr_t, yva = y_tr_t[tr_idx], y_tr[va_idx]
-                model = LinearRegression()
+                model = Pipeline([
+                    ('imputer', SimpleImputer(strategy='median')),
+                    ('model', LinearRegression()),
+                ])
                 model.fit(Xtr, ytr_t)
                 pred_t = model.predict(Xva)
                 pred = _inverse_label_transform(np.asarray(pred_t, dtype=float), stats)
@@ -206,9 +219,15 @@ def forward_select_linear(dataset: str, data_path: List[str], cycle_limit: int, 
         # Fit on full train with current selected, evaluate Test RMSE
         X_tr_full, y_tr_full, _ = _assemble_dataset(train_tables, train_files, selected, cycle_limit)
         y_tr_t_full, stats_full = _fit_label_transform(y_tr_full)
-        model_full = LinearRegression()
+        model_full = Pipeline([
+            ('imputer', SimpleImputer(strategy='median')),
+            ('model', LinearRegression()),
+        ])
         model_full.fit(X_tr_full, y_tr_t_full)
         X_te, y_te, _ = _assemble_dataset(test_tables, test_files, selected, cycle_limit)
+        if X_te.size == 0:
+            print("No test features; skipping test RMSE.", flush=True)
+            continue
         pred_t = model_full.predict(X_te)
         y_pred = _inverse_label_transform(np.asarray(pred_t, dtype=float), stats_full)
         test_rmse = mean_squared_error(y_te, y_pred) ** 0.5
