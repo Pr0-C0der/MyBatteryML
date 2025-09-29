@@ -40,7 +40,7 @@ def _default_feature_names() -> List[str]:
     excluded_tokens = ('temperature', 'internal')
     names = [n for n in all_fns.keys() if not any(tok in n.lower() for tok in excluded_tokens)]
 
-    print(f'Selected features: {sorted(names)}')
+    print(f'Selected features: {sorted(names)}', flush=True)
     return sorted(names)
 
 
@@ -145,13 +145,20 @@ def _assemble_dataset(feature_tables: Dict[str, pd.DataFrame], files: List[Path]
 def forward_select_linear(dataset: str, data_path: List[str], cycle_limit: int, pool_features: List[str], cv_splits: int = 5, verbose: bool = True):
     train_files, test_files = build_train_test_lists(dataset, data_path)
     if verbose:
-        print(f"Found {len(train_files)} train and {len(test_files)} test batteries for {dataset}")
+        print(f"Found {len(train_files)} train and {len(test_files)} test batteries for {dataset}", flush=True)
+    if not train_files or not test_files:
+        print("No train/test files found. Check --data_path.", flush=True)
+        return
 
     all_fns = _available_feature_fns()
     feature_fns = {n: all_fns[n] for n in pool_features if n in all_fns}
 
     # Precompute feature tables for all pool features
+    if verbose:
+        print("Precomputing train feature tables...", flush=True)
     train_tables = _precompute_feature_tables(train_files, feature_fns)
+    if verbose:
+        print("Precomputing test feature tables...", flush=True)
     test_tables = _precompute_feature_tables(test_files, feature_fns)
 
     selected: List[str] = []
@@ -189,7 +196,7 @@ def forward_select_linear(dataset: str, data_path: List[str], cycle_limit: int, 
 
         if best_feat is None:
             if verbose:
-                print("No further improvement; stopping.")
+                print("No further improvement; stopping.", flush=True)
             break
 
         # Add the best feature
@@ -207,7 +214,7 @@ def forward_select_linear(dataset: str, data_path: List[str], cycle_limit: int, 
         test_rmse = mean_squared_error(y_te, y_pred) ** 0.5
 
         if verbose:
-            print(f"Iter {iter_idx}: +{best_feat} | selected={len(selected)} | Test RMSE={test_rmse:.3f} | CV RMSE={best_cv_rmse:.3f}")
+            print(f"Iter {iter_idx}: +{best_feat} | selected={len(selected)} | Test RMSE={test_rmse:.3f} | CV RMSE={best_cv_rmse:.3f}", flush=True)
 
         if test_rmse + 1e-6 < best_overall_rmse:
             best_overall_rmse = test_rmse
@@ -216,7 +223,7 @@ def forward_select_linear(dataset: str, data_path: List[str], cycle_limit: int, 
             pass
 
     if verbose:
-        print(f"Done. Selected features ({len(selected)}): {selected}")
+        print(f"Done. Selected features ({len(selected)}): {selected}", flush=True)
 
 
 def main():
