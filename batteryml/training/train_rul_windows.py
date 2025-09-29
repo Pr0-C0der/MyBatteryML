@@ -240,7 +240,7 @@ def _prepare_dataset_battery_level(files: List[Path], feature_fns: Dict[str, cal
 
 def _build_models(use_gpu: bool = False) -> Dict[str, Pipeline]:
     models: Dict[str, Pipeline] = {}
-    base_steps = [('imputer', SimpleImputer(strategy='median')), ('scaler', StandardScaler())]
+    base_steps = [('imputer', SimpleImputer(strategy='constant', fill_value=0.0)), ('scaler', StandardScaler())]
 
     # Determine if GPU is truly available (even if --gpu passed)
     gpu_available = False
