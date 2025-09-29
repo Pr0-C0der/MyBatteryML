@@ -57,6 +57,14 @@ def _default_feature_names() -> List[str]:
     excluded_tokens = ('temperature', 'internal')
     names = [n for n in all_fns.keys() if not any(tok in n.lower() for tok in excluded_tokens)]
 
+    names = [
+        'avg_voltage', 'avg_current',
+        'avg_c_rate', 'max_discharge_capacity', 'max_charge_capacity',
+        'avg_discharge_capacity', 'avg_charge_capacity',
+        'charge_cycle_length', 'discharge_cycle_length', 'peak_cv_length',
+        'cycle_length', 'power_during_charge_cycle', 'power_during_discharge_cycle',
+        'avg_charge_c_rate', 'avg_discharge_c_rate', 'charge_to_discharge_time_ratio'
+    ]
     print(f'Selected features: {sorted(names)}', flush=True)
     return sorted(names)
 
