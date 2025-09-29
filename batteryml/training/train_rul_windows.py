@@ -27,6 +27,17 @@ try:
     _HAS_XGB = True
 except Exception:
     _HAS_XGB = False
+# Optional Torch for NN wrappers
+try:
+    import torch
+    import torch.nn as nn
+    from torch.utils.data import DataLoader, TensorDataset
+    from batteryml.models.rul_predictors.cnn import CNNRULPredictor
+    from batteryml.models.rul_predictors.lstm import LSTMRULPredictor
+    from batteryml.models.rul_predictors.transformer import TransformerRULPredictor
+    _HAS_TORCH = True
+except Exception:
+    _HAS_TORCH = False
 
 # Optional RAPIDS cuML (GPU) support
 try:
@@ -374,6 +385,88 @@ def _build_models(use_gpu: bool = False) -> Dict[str, Pipeline]:
     return models
 
 
+class _TorchNNRegressor:
+    """Sklearn-like wrapper around Torch NN models (CNN/LSTM/Transformer).
+
+    Assumes input X is [B, F * window_size] flattened in cycle-major order.
+    """
+    def __init__(self, model_type: str, window_size: int, channels: int = 64, epochs: int = 50, batch_size: int = 64, lr: float = 1e-3, use_gpu: bool = False):
+        self.model_type = model_type
+        self.window_size = int(window_size)
+        self.channels = int(channels)
+        self.epochs = int(epochs)
+        self.batch_size = int(batch_size)
+        self.lr = float(lr)
+        self.use_gpu = bool(use_gpu)
+        self._model = None
+        self._device = 'cpu'
+
+    def _reshape(self, X: np.ndarray) -> np.ndarray:
+        B, D = X.shape
+        if self.window_size <= 0 or D % self.window_size != 0:
+            # Fallback: infer window_size as best guess (avoid crash)
+            w = self.window_size if self.window_size > 0 else max(1, D)
+            F = max(1, D // w)
+        else:
+            F = D // self.window_size
+        # reshape to [B, H, F]
+        X3 = X.reshape(B, self.window_size, F)
+        # models accept [B, H, F] or [B, 1, H, F]
+        return X3
+
+    def fit(self, X: np.ndarray, y: np.ndarray):
+        if not _HAS_TORCH:
+            # No torch available; behave as a no-op linear fit fallback to avoid runtime error
+            self._model = ('noop', np.mean(y))
+            return self
+        X3 = self._reshape(np.asarray(X, dtype=np.float32))
+        yv = np.asarray(y, dtype=np.float32)
+        B, H, F = X3.shape
+        in_channels = 1
+        input_height = H
+        input_width = F
+        # Select device
+        self._device = 'cuda' if (self.use_gpu and torch.cuda.is_available()) else 'cpu'
+        # Build model
+        if self.model_type == 'cnn':
+            model = CNNRULPredictor(in_channels=in_channels, channels=self.channels, input_height=input_height, input_width=input_width)
+        elif self.model_type == 'lstm':
+            model = LSTMRULPredictor(in_channels=in_channels, channels=self.channels, input_height=input_height, input_width=input_width)
+        else:
+            # transformer
+            model = TransformerRULPredictor(in_channels=in_channels, channels=self.channels, input_height=input_height, input_width=input_width)
+        model = model.to(self._device)
+        # Prepare tensors
+        X_t = torch.tensor(X3, dtype=torch.float32, device=self._device)
+        y_t = torch.tensor(yv, dtype=torch.float32, device=self._device)
+        ds = TensorDataset(X_t, y_t)
+        loader = DataLoader(ds, batch_size=self.batch_size, shuffle=True)
+        opt = torch.optim.Adam(model.parameters(), lr=self.lr)
+        model.train()
+        for _ in range(max(1, self.epochs)):
+            for xb, yb in loader:
+                pred = model(xb, yb, return_loss=False)
+                loss = torch.mean((pred - yb.view(-1)) ** 2)
+                opt.zero_grad()
+                loss.backward()
+                opt.step()
+        self._model = model.eval()
+        return self
+
+    def predict(self, X: np.ndarray) -> np.ndarray:
+        if isinstance(self._model, tuple) and self._model[0] == 'noop':
+            return np.full((X.shape[0],), float(self._model[1]), dtype=float)
+        if not _HAS_TORCH or self._model is None:
+            return np.zeros((X.shape[0],), dtype=float)
+        X3 = self._reshape(np.asarray(X, dtype=np.float32))
+        Xt = torch.tensor(X3, dtype=torch.float32, device=self._device)
+        with torch.no_grad():
+            # Dummy labels not used when return_loss=False
+            yt = torch.zeros((Xt.shape[0],), dtype=torch.float32, device=self._device)
+            out = self._model(Xt, yt, return_loss=False)
+        return out.detach().cpu().numpy().astype(float)
+
+
 def run(dataset: str, data_path: str, output_dir: str, window_size: int, features: Optional[List[str]] = None, use_gpu: bool = False, cycle_limit: Optional[int] = None, battery_level: bool = False, verbose: bool = False, report_missing: bool = False, tune: bool = False, cv_splits: int = 5):
     out_dir = Path(output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -448,6 +541,12 @@ def run(dataset: str, data_path: str, output_dir: str, window_size: int, feature
     y_train_t, train_label_stats = _fit_label_transform(y_train)
 
     models = _build_models(use_gpu=use_gpu)
+    # Append NN wrappers at the end if torch is available
+    if _HAS_TORCH:
+        time_len = window_size if not battery_level else (cycle_limit or window_size)
+        models['cnn'] = Pipeline([('imputer', SimpleImputer(strategy='constant', fill_value=0.0)), ('scaler', StandardScaler()), ('model', _TorchNNRegressor('cnn', window_size=time_len, channels=32, epochs=10, batch_size=64, lr=1e-3, use_gpu=use_gpu))])
+        models['lstm'] = Pipeline([('imputer', SimpleImputer(strategy='constant', fill_value=0.0)), ('scaler', StandardScaler()), ('model', _TorchNNRegressor('lstm', window_size=time_len, channels=64, epochs=10, batch_size=64, lr=1e-3, use_gpu=use_gpu))])
+        models['transformer'] = Pipeline([('imputer', SimpleImputer(strategy='constant', fill_value=0.0)), ('scaler', StandardScaler()), ('model', _TorchNNRegressor('transformer', window_size=time_len, channels=64, epochs=10, batch_size=64, lr=5e-4, use_gpu=use_gpu))])
     rows = []
     for name, pipe in models.items():
         print(f"Training {name}...")
@@ -517,6 +616,27 @@ def run(dataset: str, data_path: str, output_dir: str, window_size: int, feature
                     'model__batch_size': [512, 1024, 2048],
                     'model__iters': [100, 200],
                     'model__lr': [1e-2, 5e-3, 1e-3],
+                }
+            elif name == 'cnn':
+                param_grid = {
+                    'model__channels': [16, 32, 64],
+                    'model__epochs': [10, 20],
+                    'model__batch_size': [32, 64],
+                    'model__lr': [1e-3, 5e-4],
+                }
+            elif name == 'lstm':
+                param_grid = {
+                    'model__channels': [32, 64, 128],
+                    'model__epochs': [10, 20],
+                    'model__batch_size': [32, 64],
+                    'model__lr': [1e-3, 5e-4],
+                }
+            elif name == 'transformer':
+                param_grid = {
+                    'model__channels': [32, 64, 128],
+                    'model__epochs': [10, 20],
+                    'model__batch_size': [32, 64],
+                    'model__lr': [1e-3, 5e-4],
                 }
             else:
                 param_grid = {}
