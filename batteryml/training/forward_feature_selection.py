@@ -35,12 +35,13 @@ def _available_feature_fns() -> Dict[str, callable]:
 
 
 def _default_feature_names() -> List[str]:
-    return [
-        'avg_c_rate', 'max_discharge_capacity', 'max_charge_capacity',
-        'avg_discharge_capacity', 'avg_charge_capacity',
-        'charge_cycle_length', 'discharge_cycle_length',
-        'cycle_length'
-    ]
+    all_fns = _available_feature_fns()
+    # Exclude any features related to temperature or internal resistance
+    excluded_tokens = ('temperature', 'internal')
+    names = [n for n in all_fns.keys() if not any(tok in n.lower() for tok in excluded_tokens)]
+
+    print(f'Selected features: {sorted(names)}')
+    return sorted(names)
 
 
 def _compute_total_rul(battery: BatteryData) -> int:
