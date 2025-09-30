@@ -41,6 +41,8 @@ def main():
 
     # Expect rows=models, columns=datasets
     df = pd.read_csv(rmse_path, index_col=0)
+    # Normalize column names (strip spaces)
+    df.columns = [str(c).strip() for c in df.columns]
     # Reorder columns as requested; append any extras at the end
     desired = ['MATR1', 'MATR2', 'HUST', 'SNL', 'CLO', 'CRUH', 'CRUSH', 'MIX100']
     ordered_cols = [c for c in desired if c in df.columns] + [c for c in df.columns if c not in desired]
@@ -80,8 +82,9 @@ def main():
                 return str(v)
         cell_text = [[_fmt3(df_fmt.loc[row, col]) for col in col_labels] for row in row_labels]
 
-        # Determine minima per column using numeric df
+        # Determine minima per column using numeric df aligned to display columns
         numeric_df = df.apply(pd.to_numeric, errors='coerce').replace([np.inf, -np.inf], np.nan)
+        numeric_df = numeric_df.reindex(columns=col_labels)
         min_rows_per_col = {}
         for j, col in enumerate(col_labels):
             col_vals = numeric_df[col]
