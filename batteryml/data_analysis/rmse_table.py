@@ -41,6 +41,11 @@ def main():
 
     # Expect rows=models, columns=datasets
     df = pd.read_csv(rmse_path, index_col=0)
+    # Reorder columns as requested; append any extras at the end
+    desired = ['MATR1', 'MATR2', 'HUST', 'SNL', 'CLO', 'CRUH', 'CRUSH', 'MIX100']
+    ordered_cols = [c for c in desired if c in df.columns] + [c for c in df.columns if c not in desired]
+    if ordered_cols:
+        df = df.reindex(columns=ordered_cols)
     df_fmt = format_rmse(df, threshold=args.threshold)
 
     # Print to stdout as a simple table
@@ -64,7 +69,16 @@ def main():
         # Build cell text
         col_labels = list(df_fmt.columns)
         row_labels = list(df_fmt.index)
-        cell_text = [[str(df_fmt.loc[row, col]) for col in col_labels] for row in row_labels]
+        # Build a 3-decimal formatted view for the PNG (keeping '> 1000' strings)
+        def _fmt3(v):
+            try:
+                f = float(v)
+                if not np.isfinite(f):
+                    return ''
+                return f"> {int(args.threshold)}" if f > args.threshold else f"{f:.3f}"
+            except Exception:
+                return str(v)
+        cell_text = [[_fmt3(df_fmt.loc[row, col]) for col in col_labels] for row in row_labels]
 
         # Determine minima per column using numeric df
         numeric_df = df.apply(pd.to_numeric, errors='coerce').replace([np.inf, -np.inf], np.nan)
