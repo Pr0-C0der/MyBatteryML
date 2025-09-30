@@ -149,65 +149,51 @@ def run(data_path: str,
                 continue
 
             feat_dir = out_dir / feature
-            indiv_dir = feat_dir / 'individual_caps'
             merged_dir = feat_dir / 'merged'
             mm_dir = feat_dir / 'moving_mean'
-            indiv_dir.mkdir(parents=True, exist_ok=True)
             merged_dir.mkdir(parents=True, exist_ok=True)
             mm_dir.mkdir(parents=True, exist_ok=True)
 
-            saved_paths: List[Path] = []
-            saved_mm_paths: List[Path] = []
+            # Plot all caps on a single figure (no individual saves)
+            prev = 0
+            fig, ax = plt.subplots(figsize=(10, 6))
+            any_ok = False
+            for cap in caps:
+                ok = _plot_single_cap(ax, x, y, prev, cap)
+                any_ok = any_ok or ok
+                prev = cap
+            if any_ok:
+                ax.set_xlabel('Cycle number')
+                ax.set_ylabel(feature.replace('_', ' ').title())
+                ax.set_title(f"{feature.replace('_', ' ').title()} vs Cycle — {b.cell_id}")
+                ax.grid(True, alpha=0.3)
+                fig.tight_layout()
+                merged_path = merged_dir / f"{_safe_id(b.cell_id)}_{feature}_merged.png"
+                fig.savefig(merged_path, dpi=300, bbox_inches='tight')
+                if verbose:
+                    print(f"[ok] saved {merged_path}")
+            plt.close(fig)
+
+            # Moving mean combined figure (no individual saves)
             y_sm = _moving_mean(y, lag_window)
             prev = 0
+            fig, ax = plt.subplots(figsize=(10, 6))
+            any_ok = False
             for cap in caps:
-                fig, ax = plt.subplots(figsize=(10, 6))
-                ok = _plot_single_cap(ax, x, y, prev, cap)
-                ax.set_xlabel('Cycle number')
-                ax.set_ylabel(feature.replace('_', ' ').title())
-                ax.set_title(f"{feature.replace('_', ' ').title()} vs Cycle — {b.cell_id} ({prev}–{cap})")
-                ax.grid(True, alpha=0.3)
-                fig.tight_layout()
-                fname = indiv_dir / f"{_safe_id(b.cell_id)}_{feature}_range_{prev}_{cap}.png"
-                if ok:
-                    fig.savefig(fname, dpi=300, bbox_inches='tight')
-                    saved_paths.append(fname)
-                plt.close(fig)
-                if verbose:
-                    print(f"[ok] saved {fname}")
-                prev = cap
-
-            # Merge per-feature images into one composite
-            if saved_paths:
-                merged_path = merged_dir / f"{_safe_id(b.cell_id)}_{feature}_merged.png"
-                merged_ok = _merge_images_horiz(saved_paths, merged_path)
-                if verbose and merged_ok:
-                    print(f"[ok] merged -> {merged_path}")
-
-            # Build moving-mean segments and merge
-            prev = 0
-            for cap in caps:
-                fig, ax = plt.subplots(figsize=(10, 6))
                 ok = _plot_single_cap(ax, x, y_sm, prev, cap)
+                any_ok = any_ok or ok
+                prev = cap
+            if any_ok:
                 ax.set_xlabel('Cycle number')
                 ax.set_ylabel(feature.replace('_', ' ').title())
-                ax.set_title(f"{feature.replace('_', ' ').title()} (moving mean w={lag_window}) — {b.cell_id} ({prev}–{cap})")
+                ax.set_title(f"{feature.replace('_', ' ').title()} (moving mean w={lag_window}) — {b.cell_id}")
                 ax.grid(True, alpha=0.3)
                 fig.tight_layout()
-                mm_seg = mm_dir / f"{_safe_id(b.cell_id)}_{feature}_mm_w{lag_window}_range_{prev}_{cap}.png"
-                if ok:
-                    fig.savefig(mm_seg, dpi=300, bbox_inches='tight')
-                    saved_mm_paths.append(mm_seg)
-                plt.close(fig)
-                if verbose:
-                    print(f"[ok] saved {mm_seg}")
-                prev = cap
-
-            if saved_mm_paths:
                 mm_merged = mm_dir / f"{_safe_id(b.cell_id)}_{feature}_mm_w{lag_window}_merged.png"
-                mm_ok = _merge_images_horiz(saved_mm_paths, mm_merged)
-                if verbose and mm_ok:
-                    print(f"[ok] merged (moving mean) -> {mm_merged}")
+                fig.savefig(mm_merged, dpi=300, bbox_inches='tight')
+                if verbose:
+                    print(f"[ok] saved (moving mean) {mm_merged}")
+            plt.close(fig)
 
 
 def main():

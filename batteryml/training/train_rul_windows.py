@@ -116,6 +116,38 @@ def _build_cycle_feature_table(battery: BatteryData, feature_fns: Dict[str, call
     return pd.DataFrame(rows)
 
 
+def _apply_feature_processing(dfn: pd.DataFrame,
+                              feature_names: List[str],
+                              kind: str = 'none',
+                              mm_window: int = 5,
+                              verbose: bool = False) -> pd.DataFrame:
+    """Apply modular feature processing along cycle axis (sorted by cycle_number).
+
+    - kind: 'none' | 'moving_mean'
+    - mm_window: window for moving mean (>=1)
+    """
+    if kind is None or kind.lower() == 'none':
+        return dfn
+    dfn = dfn.sort_values('cycle_number').reset_index(drop=True)
+    cols = [c for c in feature_names if c in dfn.columns]
+    if not cols:
+        return dfn
+    if kind == 'moving_mean':
+        w = max(1, int(mm_window or 1))
+        try:
+            # rolling mean per column along cycles
+            dfn[cols] = dfn[cols].rolling(window=w, min_periods=1).mean()
+        except Exception as e:
+            if verbose:
+                print(f"[warn] moving_mean failed (w={w}): {e}")
+            return dfn
+        return dfn
+    # Unknown kind -> no-op
+    if verbose:
+        print(f"[warn] unknown feature_processing '{kind}', skipping")
+    return dfn
+
+
 def _filter_df_by_cycle_limit(df: pd.DataFrame, cycle_limit: Optional[int], verbose: bool = False) -> pd.DataFrame:
     dfn = df.sort_values('cycle_number').reset_index(drop=True)
     if cycle_limit is not None:
@@ -125,9 +157,15 @@ def _filter_df_by_cycle_limit(df: pd.DataFrame, cycle_limit: Optional[int], verb
     return dfn
 
 
-def _make_windows(df: pd.DataFrame, feature_names: List[str], total_rul: int, window_size: int, cycle_limit: Optional[int] = None, verbose: bool = False) -> Tuple[np.ndarray, np.ndarray]:
+def _make_windows(df: pd.DataFrame, feature_names: List[str], total_rul: int, window_size: int,
+                  cycle_limit: Optional[int] = None,
+                  verbose: bool = False,
+                  feature_processing: str = 'none',
+                  fp_mm_window: int = 5) -> Tuple[np.ndarray, np.ndarray]:
     # df must be sorted by cycle_number ascending
     dfn = _filter_df_by_cycle_limit(df, cycle_limit, verbose=verbose)
+    # Apply feature processing after cycle filter
+    dfn = _apply_feature_processing(dfn, feature_names, kind=feature_processing, mm_window=fp_mm_window, verbose=verbose)
     # Ensure features present
     cols = [c for c in feature_names if c in dfn.columns]
     if not cols:
@@ -158,8 +196,12 @@ def _make_windows(df: pd.DataFrame, feature_names: List[str], total_rul: int, wi
     return X, y
 
 
-def _make_battery_vector(df: pd.DataFrame, feature_names: List[str], cycle_limit: int, verbose: bool = False) -> np.ndarray:
+def _make_battery_vector(df: pd.DataFrame, feature_names: List[str], cycle_limit: int,
+                         verbose: bool = False,
+                         feature_processing: str = 'none',
+                         fp_mm_window: int = 5) -> np.ndarray:
     dfn = _filter_df_by_cycle_limit(df, cycle_limit, verbose=verbose)
+    dfn = _apply_feature_processing(dfn, feature_names, kind=feature_processing, mm_window=fp_mm_window, verbose=verbose)
     cols = [c for c in feature_names if c in dfn.columns]
     if not cols:
         return np.zeros((0,), dtype=float)
@@ -196,7 +238,9 @@ def _report_missing_for_battery(cell_id: str, df: pd.DataFrame, feature_names: L
         print(f"[missing] battery={cell_id} cycle={int(row['cycle_number'])} features={missing_feats}")
 
 
-def _prepare_dataset_windows(files: List[Path], feature_fns: Dict[str, callable], feature_names: List[str], window_size: int, cycle_limit: Optional[int], verbose: bool, report_missing: bool, progress_desc: str) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+def _prepare_dataset_windows(files: List[Path], feature_fns: Dict[str, callable], feature_names: List[str], window_size: int,
+                             cycle_limit: Optional[int], verbose: bool, report_missing: bool, progress_desc: str,
+                             feature_processing: str, fp_mm_window: int) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
     Xs: List[np.ndarray] = []
     ys: List[np.ndarray] = []
     groups: List[str] = []
@@ -209,7 +253,9 @@ def _prepare_dataset_windows(files: List[Path], feature_fns: Dict[str, callable]
         df = _build_cycle_feature_table(battery, feature_fns)
         if report_missing:
             _report_missing_for_battery(battery.cell_id, df, feature_names, cycle_limit, verbose=verbose)
-        Xw, yw = _make_windows(df, feature_names, total_rul, window_size, cycle_limit=cycle_limit, verbose=verbose)
+        Xw, yw = _make_windows(df, feature_names, total_rul, window_size,
+                               cycle_limit=cycle_limit, verbose=verbose,
+                               feature_processing=feature_processing, fp_mm_window=fp_mm_window)
         if Xw.size and yw.size:
             Xs.append(Xw)
             ys.append(yw)
@@ -224,7 +270,9 @@ def _prepare_dataset_windows(files: List[Path], feature_fns: Dict[str, callable]
     return X, y, g
 
 
-def _prepare_dataset_battery_level(files: List[Path], feature_fns: Dict[str, callable], feature_names: List[str], cycle_limit: int, verbose: bool, report_missing: bool, progress_desc: str) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+def _prepare_dataset_battery_level(files: List[Path], feature_fns: Dict[str, callable], feature_names: List[str], cycle_limit: int,
+                                   verbose: bool, report_missing: bool, progress_desc: str,
+                                   feature_processing: str, fp_mm_window: int) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
     X_list: List[np.ndarray] = []
     y_list: List[float] = []
     groups: List[str] = []
@@ -237,7 +285,8 @@ def _prepare_dataset_battery_level(files: List[Path], feature_fns: Dict[str, cal
         df = _build_cycle_feature_table(battery, feature_fns)
         if report_missing:
             _report_missing_for_battery(battery.cell_id, df, feature_names, cycle_limit, verbose=verbose)
-        vec = _make_battery_vector(df, feature_names, cycle_limit=cycle_limit, verbose=verbose)
+        vec = _make_battery_vector(df, feature_names, cycle_limit=cycle_limit, verbose=verbose,
+                                   feature_processing=feature_processing, fp_mm_window=fp_mm_window)
         if vec.size == 0:
             if verbose:
                 print(f"[skip] {f.name}: no features present after filtering")
@@ -479,7 +528,10 @@ class _TorchNNRegressor:
         return out.detach().cpu().numpy().astype(float)
 
 
-def run(dataset: str, data_path: str, output_dir: str, window_size: int, features: Optional[List[str]] = None, use_gpu: bool = False, cycle_limit: Optional[int] = None, battery_level: bool = False, verbose: bool = False, report_missing: bool = False, tune: bool = False, cv_splits: int = 5):
+def run(dataset: str, data_path: str, output_dir: str, window_size: int, features: Optional[List[str]] = None, use_gpu: bool = False,
+        cycle_limit: Optional[int] = None, battery_level: bool = False, verbose: bool = False, report_missing: bool = False,
+        tune: bool = False, cv_splits: int = 5,
+        feature_processing: str = 'none', fp_mm_window: int = 5):
     out_dir = Path(output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -517,11 +569,23 @@ def run(dataset: str, data_path: str, output_dir: str, window_size: int, feature
     if battery_level:
         if cycle_limit is None:
             raise ValueError("--battery_level requires --cycle_limit to define vector length")
-        X_train, y_train, g_train = _prepare_dataset_battery_level(train_files, feature_fns, feature_names, cycle_limit=int(cycle_limit), verbose=verbose, report_missing=report_missing, progress_desc='Building train battery vectors')
-        X_test, y_test, _ = _prepare_dataset_battery_level(test_files, feature_fns, feature_names, cycle_limit=int(cycle_limit), verbose=verbose, report_missing=report_missing, progress_desc='Building test battery vectors')
+        X_train, y_train, g_train = _prepare_dataset_battery_level(train_files, feature_fns, feature_names, cycle_limit=int(cycle_limit),
+                                                                   verbose=verbose, report_missing=report_missing,
+                                                                   progress_desc='Building train battery vectors',
+                                                                   feature_processing=feature_processing, fp_mm_window=fp_mm_window)
+        X_test, y_test, _ = _prepare_dataset_battery_level(test_files, feature_fns, feature_names, cycle_limit=int(cycle_limit),
+                                                           verbose=verbose, report_missing=report_missing,
+                                                           progress_desc='Building test battery vectors',
+                                                           feature_processing=feature_processing, fp_mm_window=fp_mm_window)
     else:
-        X_train, y_train, g_train = _prepare_dataset_windows(train_files, feature_fns, feature_names, window_size, cycle_limit=cycle_limit, verbose=verbose, report_missing=report_missing, progress_desc='Building train windows')
-        X_test, y_test, _ = _prepare_dataset_windows(test_files, feature_fns, feature_names, window_size, cycle_limit=cycle_limit, verbose=verbose, report_missing=report_missing, progress_desc='Building test windows')
+        X_train, y_train, g_train = _prepare_dataset_windows(train_files, feature_fns, feature_names, window_size,
+                                                             cycle_limit=cycle_limit, verbose=verbose, report_missing=report_missing,
+                                                             progress_desc='Building train windows', feature_processing=feature_processing,
+                                                             fp_mm_window=fp_mm_window)
+        X_test, y_test, _ = _prepare_dataset_windows(test_files, feature_fns, feature_names, window_size,
+                                                     cycle_limit=cycle_limit, verbose=verbose, report_missing=report_missing,
+                                                     progress_desc='Building test windows', feature_processing=feature_processing,
+                                                     fp_mm_window=fp_mm_window)
 
     if X_train.size == 0 or X_test.size == 0:
         print("No data available after windowing. Aborting.")
@@ -762,9 +826,12 @@ def main():
     parser.add_argument('--report_missing', action='store_true', help='Report per-battery, per-cycle missing features (NaNs)')
     parser.add_argument('--tune', action='store_true', help='Enable GridSearchCV with GroupKFold on training set')
     parser.add_argument('--cv_splits', type=int, default=5, help='Number of GroupKFold splits for tuning (default 5)')
+    parser.add_argument('--feature_processing', type=str, default='none', choices=['none', 'moving_mean'], help='Feature processing to apply before flattening')
     args = parser.parse_args()
 
-    run(args.dataset, args.data_path, args.output_dir, args.window_size, features=args.features, use_gpu=args.gpu, cycle_limit=args.cycle_limit, battery_level=args.battery_level, verbose=args.verbose, report_missing=args.report_missing, tune=args.tune, cv_splits=args.cv_splits)
+    run(args.dataset, args.data_path, args.output_dir, args.window_size, features=args.features, use_gpu=args.gpu,
+        cycle_limit=args.cycle_limit, battery_level=args.battery_level, verbose=args.verbose, report_missing=args.report_missing,
+        tune=args.tune, cv_splits=args.cv_splits, feature_processing=args.feature_processing, fp_mm_window=5)
 
 
 if __name__ == '__main__':
