@@ -697,7 +697,16 @@ def run(dataset: str, data_path: str, output_dir: str, window_size: int, feature
         print(f"  {name}: MAE={mae:.3f} RMSE={rmse:.3f}")
 
     suffix = (f"_bl_cl{cycle_limit}" if battery_level else f"_ws{window_size}") + ("_cl" if cycle_limit and not battery_level else "")
-    pd.DataFrame(rows).to_csv(out_dir / f"rul_metrics{suffix}.csv", index=False)
+    df_metrics = pd.DataFrame(rows)
+    df_metrics.to_csv(out_dir / f"rul_metrics{suffix}.csv", index=False)
+    # Save test errors (MAE, RMSE) under test_results/
+    test_results_dir = out_dir / 'test_results'
+    test_results_dir.mkdir(exist_ok=True)
+    try:
+        df_metrics[['model', 'MAE', 'RMSE']].to_csv(test_results_dir / f"test_results{suffix}.csv", index=False)
+    except Exception:
+        # Fallback: write full metrics if column subset fails
+        df_metrics.to_csv(test_results_dir / f"test_results{suffix}.csv", index=False)
 
 
 def main():
