@@ -9,6 +9,7 @@ import numpy as np
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
+from io import BytesIO
 
 from batteryml.data.battery_data import BatteryData
 try:
@@ -92,6 +93,41 @@ def _merge_images_horiz(paths: List[Path], out_path: Path) -> bool:
         return False
 
 
+def _merge_images_horiz_from_images(imgs, out_path: Path) -> bool:
+    if not _HAS_PIL:
+        return False
+    if not imgs:
+        return False
+    try:
+        heights = [im.height for im in imgs]
+        max_h = max(heights)
+        widths = [im.width for im in imgs]
+        total_w = sum(widths)
+        canvas = Image.new('RGB', (total_w, max_h), color=(255, 255, 255))
+        xoff = 0
+        for im in imgs:
+            yoff = (max_h - im.height) // 2
+            canvas.paste(im, (xoff, yoff))
+            xoff += im.width
+        canvas.save(out_path)
+        return True
+    except Exception:
+        return False
+
+
+def _fig_to_pil(fig):
+    if not _HAS_PIL:
+        return None
+    try:
+        buf = BytesIO()
+        fig.savefig(buf, format='png', dpi=300, bbox_inches='tight')
+        buf.seek(0)
+        im = Image.open(buf).convert('RGB')
+        buf.close()
+        return im
+    except Exception:
+        return None
+
 def _default_feature_names() -> List[str]:
     # Match train_rul_windows default list
     return [
@@ -154,46 +190,88 @@ def run(data_path: str,
             merged_dir.mkdir(parents=True, exist_ok=True)
             mm_dir.mkdir(parents=True, exist_ok=True)
 
-            # Plot all caps on a single figure (no individual saves)
+            # Create per-cap figures in memory and merge horizontally (no individual files on disk)
+            images = []
             prev = 0
-            fig, ax = plt.subplots(figsize=(10, 6))
-            any_ok = False
             for cap in caps:
+                fig, ax = plt.subplots(figsize=(10, 6))
                 ok = _plot_single_cap(ax, x, y, prev, cap)
-                any_ok = any_ok or ok
-                prev = cap
-            if any_ok:
                 ax.set_xlabel('Cycle number')
                 ax.set_ylabel(feature.replace('_', ' ').title())
-                ax.set_title(f"{feature.replace('_', ' ').title()} vs Cycle — {b.cell_id}")
+                ax.set_title(f"{feature.replace('_', ' ').title()} vs Cycle — {b.cell_id} ({prev}–{cap})")
                 ax.grid(True, alpha=0.3)
                 fig.tight_layout()
+                if ok:
+                    im = _fig_to_pil(fig)
+                    if im is not None:
+                        images.append(im)
+                plt.close(fig)
+                prev = cap
+
+            if images:
                 merged_path = merged_dir / f"{_safe_id(b.cell_id)}_{feature}_merged.png"
-                fig.savefig(merged_path, dpi=300, bbox_inches='tight')
+                merged_ok = _merge_images_horiz_from_images(images, merged_path)
+                if not merged_ok:
+                    # Fallback: use subplots layout to emulate merged look without PIL
+                    cols = len(images)
+                    fig, axes = plt.subplots(1, cols, figsize=(10 * cols, 6), sharey=True)
+                    # We cannot re-render from images easily without PIL, so replot quickly
+                    prev = 0
+                    for i, cap in enumerate(caps):
+                        ax = axes[i] if cols > 1 else axes
+                        _plot_single_cap(ax, x, y, prev, cap)
+                        ax.set_xlabel('Cycle number')
+                        if i == 0:
+                            ax.set_ylabel(feature.replace('_', ' ').title())
+                        ax.set_title(f"{prev}–{cap}")
+                        ax.grid(True, alpha=0.3)
+                        prev = cap
+                    fig.tight_layout()
+                    fig.savefig(merged_path, dpi=300, bbox_inches='tight')
+                    plt.close(fig)
                 if verbose:
                     print(f"[ok] saved {merged_path}")
-            plt.close(fig)
 
-            # Moving mean combined figure (no individual saves)
+            # Moving mean: create per-cap figures in memory and merge horizontally
+            images_mm = []
             y_sm = _moving_mean(y, lag_window)
             prev = 0
-            fig, ax = plt.subplots(figsize=(10, 6))
-            any_ok = False
             for cap in caps:
+                fig, ax = plt.subplots(figsize=(10, 6))
                 ok = _plot_single_cap(ax, x, y_sm, prev, cap)
-                any_ok = any_ok or ok
-                prev = cap
-            if any_ok:
                 ax.set_xlabel('Cycle number')
                 ax.set_ylabel(feature.replace('_', ' ').title())
-                ax.set_title(f"{feature.replace('_', ' ').title()} (moving mean w={lag_window}) — {b.cell_id}")
+                ax.set_title(f"{feature.replace('_', ' ').title()} (moving mean w={lag_window}) — {b.cell_id} ({prev}–{cap})")
                 ax.grid(True, alpha=0.3)
                 fig.tight_layout()
+                if ok:
+                    im = _fig_to_pil(fig)
+                    if im is not None:
+                        images_mm.append(im)
+                plt.close(fig)
+                prev = cap
+
+            if images_mm:
                 mm_merged = mm_dir / f"{_safe_id(b.cell_id)}_{feature}_mm_w{lag_window}_merged.png"
-                fig.savefig(mm_merged, dpi=300, bbox_inches='tight')
+                mm_ok = _merge_images_horiz_from_images(images_mm, mm_merged)
+                if not mm_ok:
+                    cols = len(images_mm)
+                    fig, axes = plt.subplots(1, cols, figsize=(10 * cols, 6), sharey=True)
+                    prev = 0
+                    for i, cap in enumerate(caps):
+                        ax = axes[i] if cols > 1 else axes
+                        _plot_single_cap(ax, x, y_sm, prev, cap)
+                        ax.set_xlabel('Cycle number')
+                        if i == 0:
+                            ax.set_ylabel(feature.replace('_', ' ').title())
+                        ax.set_title(f"{prev}–{cap}")
+                        ax.grid(True, alpha=0.3)
+                        prev = cap
+                    fig.tight_layout()
+                    fig.savefig(mm_merged, dpi=300, bbox_inches='tight')
+                    plt.close(fig)
                 if verbose:
                     print(f"[ok] saved (moving mean) {mm_merged}")
-            plt.close(fig)
 
 
 def main():
