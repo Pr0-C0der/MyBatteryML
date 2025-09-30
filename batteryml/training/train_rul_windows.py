@@ -435,7 +435,8 @@ class _TorchNNRegressor:
         self._device = 'cuda' if (self.use_gpu and torch.cuda.is_available()) else 'cpu'
         # Build model
         if self.model_type == 'cnn':
-            model = CNNRULPredictor(in_channels=in_channels, channels=self.channels, input_height=input_height, input_width=input_width)
+            # Use kernel_size=1 to avoid aggressive downsampling on narrow feature width
+            model = CNNRULPredictor(in_channels=in_channels, channels=self.channels, input_height=input_height, input_width=input_width, kernel_size=1)
         elif self.model_type == 'lstm':
             model = LSTMRULPredictor(in_channels=in_channels, channels=self.channels, input_height=input_height, input_width=input_width)
         else:
