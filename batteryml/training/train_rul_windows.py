@@ -720,6 +720,32 @@ def run(dataset: str, data_path: str, output_dir: str, window_size: int, feature
         # Fallback: write full metrics if column subset fails
         df_metrics.to_csv(test_results_dir / f"test_results{suffix}.csv", index=False)
 
+    # Update global matrices (one CSV per metric) with models as rows and datasets as columns
+    def _update_matrix(csv_path: Path, metric_col: str, dataset_name: str, df: pd.DataFrame):
+        series = df.set_index('model')[metric_col]
+        if csv_path.exists():
+            try:
+                mat = pd.read_csv(csv_path, index_col=0)
+            except Exception:
+                mat = pd.DataFrame()
+        else:
+            mat = pd.DataFrame()
+        # Ensure index union and set/update column
+        if mat.empty:
+            mat = pd.DataFrame(series)
+            mat.columns = [dataset_name]
+        else:
+            # align by model index
+            mat = mat.reindex(mat.index.union(series.index))
+            mat[dataset_name] = series.reindex(mat.index)
+        mat.to_csv(csv_path)
+
+    # Place matrices at the parent of output_dir so they aggregate across datasets
+    aggregate_root = out_dir.parent
+    aggregate_root.mkdir(parents=True, exist_ok=True)
+    _update_matrix(aggregate_root / 'MAE.csv', 'MAE', dataset, df_metrics)
+    _update_matrix(aggregate_root / 'RMSE.csv', 'RMSE', dataset, df_metrics)
+
 
 def main():
     parser = argparse.ArgumentParser(description='RUL prediction with per-cycle features (windowed or battery-level)')
