@@ -424,6 +424,7 @@ class _TorchNNRegressor:
         if not _HAS_TORCH:
             # No torch available; behave as a no-op linear fit fallback to avoid runtime error
             self._model = ('noop', np.mean(y))
+            self.is_fitted_ = True
             return self
         X3 = self._reshape(np.asarray(X, dtype=np.float32))
         yv = np.asarray(y, dtype=np.float32)
@@ -458,9 +459,13 @@ class _TorchNNRegressor:
                 loss.backward()
                 opt.step()
         self._model = model.eval()
+        self.is_fitted_ = True
         return self
 
     def predict(self, X: np.ndarray) -> np.ndarray:
+        if hasattr(self, 'is_fitted_') and not getattr(self, 'is_fitted_', False):
+            # Defensive: if somehow predict called before fit
+            return np.zeros((X.shape[0],), dtype=float)
         if isinstance(self._model, tuple) and self._model[0] == 'noop':
             return np.full((X.shape[0],), float(self._model[1]), dtype=float)
         if not _HAS_TORCH or self._model is None:
