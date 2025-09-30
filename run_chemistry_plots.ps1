@@ -27,11 +27,11 @@ function Invoke-Chemistry {
     New-Item -ItemType Directory -Force -Path $corrOut | Out-Null
     Write-Host "=== Processing chemistry: $Chem ==="
     if ($Hint) {
-        python -m $cyclePlotModule --data_path "$dataPath" --output_dir "$cycleOut" --cycle_gap 100 --dataset_hint $Hint --verbose | Write-Host
+        python -m $cyclePlotModule --data_path "$dataPath" --output_dir "$cycleOut" --cycle_gap 500 --dataset_hint $Hint --verbose | Write-Host
         python -m $corrModule --data_path "$dataPath" --output_dir "$corrOut" --dataset_hint $Hint --verbose | Write-Host
     }
     else {
-        python -m $cyclePlotModule --data_path "$dataPath" --output_dir "$cycleOut" --cycle_gap 100 --verbose | Write-Host
+        python -m $cyclePlotModule --data_path "$dataPath" --output_dir "$cycleOut" --cycle_gap 500 --verbose | Write-Host
         python -m $corrModule --data_path "$dataPath" --output_dir "$corrOut" --verbose | Write-Host
     }
 }

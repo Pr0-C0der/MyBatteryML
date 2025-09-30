@@ -52,6 +52,14 @@ class ChemistryCorrelationAnalyzer:
         self.features: Dict[str, CycleScalarFeature] = {}
         self.rul_annotator = RULLabelAnnotator()
 
+    @staticmethod
+    def _safe_filename(name: str) -> str:
+        invalid = '<>:"/\\|?*'
+        s = ''.join(('_' if ch in invalid else ch) for ch in str(name))
+        s = s.strip().replace(' ', '_')
+        s = ''.join(ch for ch in s if ch.isprintable())
+        return s or 'unknown'
+
     # -------------
     # Dataset logic
     # -------------
@@ -154,7 +162,7 @@ class ChemistryCorrelationAnalyzer:
         corr = numeric.corr()
         fig = go.Figure(data=go.Heatmap(z=corr.values, x=corr.columns, y=corr.index, colorscale='RdBu', zmid=0))
         fig.update_layout(title=f'Feature Correlation Matrix - {battery.cell_id}', template='plotly_white')
-        safe_id = battery.cell_id.replace('/', '_').replace('\\', '_')
+        safe_id = self._safe_filename(battery.cell_id)
         out_path = self.heatmaps_dir / f"{safe_id}_correlation_heatmap.png"
         try:
             fig.write_image(str(out_path), scale=2)
@@ -173,7 +181,7 @@ class ChemistryCorrelationAnalyzer:
         colors = ['red' if v < 0 else 'blue' for v in series.values]
         fig = go.Figure(go.Bar(x=series.values, y=series.index, orientation='h', marker_color=colors))
         fig.update_layout(title=f'Feature correlations with RUL - {battery.cell_id}', xaxis_title='Correlation with RUL', template='plotly_white')
-        safe_id = battery.cell_id.replace('/', '_').replace('\\', '_')
+        safe_id = self._safe_filename(battery.cell_id)
         out_path = self.rul_bars_dir / f"{safe_id}_rul_correlations.png"
         try:
             fig.write_image(str(out_path), scale=2)

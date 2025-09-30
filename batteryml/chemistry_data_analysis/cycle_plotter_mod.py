@@ -62,6 +62,16 @@ class ChemistryCyclePlotter:
         except Exception:
             self._has_kaleido = False
 
+    @staticmethod
+    def _safe_filename(name: str) -> str:
+        # Replace characters invalid on Windows filesystems and collapse whitespace
+        invalid = '<>:"/\\|?*'
+        s = ''.join(('_' if ch in invalid else ch) for ch in str(name))
+        s = s.strip().replace(' ', '_')
+        # Remove any residual control characters
+        s = ''.join(ch for ch in s if ch.isprintable())
+        return s or 'unknown'
+
     # -------------
     # Save helpers
     # -------------
@@ -198,7 +208,7 @@ class ChemistryCyclePlotter:
             legend=dict(orientation='h', yanchor='bottom', y=1.02, xanchor='right', x=1)
         )
         out_dir = self.output_dir / self._chemistry_name / 'feature_vs_time_graphs' / f"{spec.name}"
-        safe_id = battery.cell_id.replace('/', '_').replace('\\', '_')
+        safe_id = self._safe_filename(battery.cell_id)
         self._save_fig(fig, out_dir / f"{safe_id}_{spec.name}_time")
         return True
 
@@ -240,7 +250,7 @@ class ChemistryCyclePlotter:
             template='plotly_white'
         )
         out_dir = self.output_dir / self._chemistry_name / 'feature_vs_cycle_graphs' / f"{spec.name}"
-        safe_id = battery.cell_id.replace('/', '_').replace('\\', '_')
+        safe_id = self._safe_filename(battery.cell_id)
         self._save_fig(fig, out_dir / f"{safe_id}_{spec.name}_cycle")
         return True
 
