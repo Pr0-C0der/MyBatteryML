@@ -102,7 +102,7 @@ def main():
         the_table.set_fontsize(9)
         the_table.scale(1, 1.2)
 
-        # Bold minima: data cells start at (row+1, col+1)
+        # Highlight minima: data cells start at (row+1, col+1)
         row_pos = {idx: i for i, idx in enumerate(row_labels)}
         for j in range(ncols):
             for idx in min_rows_per_col.get(j, set()):
@@ -110,7 +110,9 @@ def main():
                     r = row_pos[idx] + 1
                     c = j + 1
                     try:
-                        the_table[(r, c)].get_text().set_weight('bold')
+                        cell = the_table[(r, c)]
+                        cell.get_text().set_weight('bold')
+                        cell.set_facecolor('#d4edda')  # light green
                     except Exception:
                         pass
 
