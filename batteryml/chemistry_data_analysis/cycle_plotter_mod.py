@@ -5,8 +5,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, List, Optional, Tuple, Dict
 
-import plotly.graph_objects as go
-import plotly.express as px
+import matplotlib
+matplotlib.use('Agg')
+import matplotlib.pyplot as plt
 
 from batteryml.data.battery_data import BatteryData
 from batteryml.chemistry_data_analysis.cycle_features import (
@@ -55,13 +56,6 @@ class ChemistryCyclePlotter:
         # Chemistry subfolder name inferred from data_path
         self._chemistry_name = self.data_path.name
 
-        # Determine image export capability
-        try:
-            import kaleido  # noqa: F401
-            self._has_kaleido = True
-        except Exception:
-            self._has_kaleido = False
-
     @staticmethod
     def _safe_filename(name: str) -> str:
         # Replace characters invalid on Windows filesystems and collapse whitespace
@@ -75,15 +69,15 @@ class ChemistryCyclePlotter:
     # -------------
     # Save helpers
     # -------------
-    def _save_fig(self, fig: go.Figure, out_base: Path):
+    def _save_png(self, out_base: Path):
         out_base.parent.mkdir(parents=True, exist_ok=True)
-        # Write PNG only
         png_path = out_base.with_suffix('.png')
         try:
-            fig.write_image(str(png_path), scale=2)
+            plt.savefig(png_path, dpi=300, bbox_inches='tight')
         except Exception:
-            # If image export fails (e.g., kaleido missing), silently skip per user request
             pass
+        finally:
+            plt.close()
 
     # -----------------
     # Dataset resolution
@@ -171,7 +165,7 @@ class ChemistryCyclePlotter:
         sel = self._select_cycles(len(battery.cycle_data))
 
         any_plotted = False
-        fig = go.Figure()
+        plt.figure(figsize=(12, 8))
         x_label = 'Relative Time (s)'
         y_label = spec.name.replace('_', ' ').title()
         for i, idx in enumerate(sel):
@@ -189,7 +183,7 @@ class ChemistryCyclePlotter:
                 if not np.any(m):
                     continue
                 xr = x[m] - x[m][0]
-                fig.add_trace(go.Scatter(x=xr, y=y[m], mode='lines', name=f'Cycle {c.cycle_number}'))
+                plt.plot(xr, y[m], linewidth=1.5, alpha=0.9, label=f'Cycle {c.cycle_number}')
                 any_plotted = True
                 x_label, y_label = xl, yl
             except Exception as e:
@@ -200,16 +194,14 @@ class ChemistryCyclePlotter:
         if not any_plotted:
             return False
 
-        fig.update_layout(
-            title=f'{spec.name.title()} vs Time - {battery.cell_id}',
-            xaxis_title=x_label,
-            yaxis_title=y_label,
-            template='plotly_white',
-            legend=dict(orientation='h', yanchor='bottom', y=1.02, xanchor='right', x=1)
-        )
+        plt.title(f'{spec.name.title()} vs Time - {battery.cell_id}')
+        plt.xlabel(x_label)
+        plt.ylabel(y_label)
+        plt.grid(True, alpha=0.3)
+        plt.legend(loc='upper right', fontsize=8)
         out_dir = self.output_dir / self._chemistry_name / 'feature_vs_time_graphs' / f"{spec.name}"
         safe_id = self._safe_filename(battery.cell_id)
-        self._save_fig(fig, out_dir / f"{safe_id}_{spec.name}_time")
+        self._save_png(out_dir / f"{safe_id}_{spec.name}_time")
         return True
 
     def plot_cycle_feature(self, battery: BatteryData, src: Path, spec: CycleFeatureSpec, extractor: DatasetSpecificCycleFeatures) -> bool:
@@ -241,17 +233,15 @@ class ChemistryCyclePlotter:
         if not np.any(m):
             return False
         xs_s = xs_s[m]; ys_s = ys_s[m]
-        fig = go.Figure()
-        fig.add_trace(go.Scatter(x=xs_s, y=ys_s, mode='lines+markers', name=spec.name))
-        fig.update_layout(
-            title=f'{spec.name.title()} vs Cycle Number - {battery.cell_id}',
-            xaxis_title='Cycle Number',
-            yaxis_title=spec.ylabel or spec.name.replace('_', ' ').title(),
-            template='plotly_white'
-        )
+        plt.figure(figsize=(10, 6))
+        plt.plot(xs_s, ys_s, marker='o', linewidth=1.6, alpha=0.9)
+        plt.title(f'{spec.name.title()} vs Cycle Number - {battery.cell_id}')
+        plt.xlabel('Cycle Number')
+        plt.ylabel(spec.ylabel or spec.name.replace('_', ' ').title())
+        plt.grid(True, alpha=0.3)
         out_dir = self.output_dir / self._chemistry_name / 'feature_vs_cycle_graphs' / f"{spec.name}"
         safe_id = self._safe_filename(battery.cell_id)
-        self._save_fig(fig, out_dir / f"{safe_id}_{spec.name}_cycle")
+        self._save_png(out_dir / f"{safe_id}_{spec.name}_cycle")
         return True
 
     # ---------------------

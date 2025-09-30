@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import numpy as np
 import pandas as pd
-import plotly.graph_objects as go
-import plotly.express as px
+import matplotlib
+matplotlib.use('Agg')
+import matplotlib.pyplot as plt
+import seaborn as sns
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, List, Optional, Dict
@@ -160,14 +162,21 @@ class ChemistryCorrelationAnalyzer:
         if numeric.shape[1] < 2:
             return
         corr = numeric.corr()
-        fig = go.Figure(data=go.Heatmap(z=corr.values, x=corr.columns, y=corr.index, colorscale='RdBu', zmid=0))
-        fig.update_layout(title=f'Feature Correlation Matrix - {battery.cell_id}', template='plotly_white')
+        plt.figure(figsize=(12, 10))
+        sns.heatmap(corr, annot=True, cmap='RdBu_r', center=0, square=True, fmt='.2f', cbar_kws={"shrink": .8}, annot_kws={'size': 8})
+        plt.title(f'Feature Correlation Matrix - {battery.cell_id}', fontsize=14, pad=20)
+        plt.xticks(rotation=45, ha='right')
+        plt.yticks(rotation=0)
+        plt.tight_layout()
         safe_id = self._safe_filename(battery.cell_id)
         out_path = self.heatmaps_dir / f"{safe_id}_correlation_heatmap.png"
+        out_path.parent.mkdir(parents=True, exist_ok=True)
         try:
-            fig.write_image(str(out_path), scale=2)
+            plt.savefig(out_path, dpi=300, bbox_inches='tight')
         except Exception:
             pass
+        finally:
+            plt.close()
 
     def plot_rul_barh(self, battery: BatteryData, df: pd.DataFrame):
         if 'rul' not in df.columns:
@@ -179,14 +188,24 @@ class ChemistryCorrelationAnalyzer:
         series = corr['rul'].drop('rul')
         series = series.sort_values(key=lambda x: np.abs(x), ascending=False)
         colors = ['red' if v < 0 else 'blue' for v in series.values]
-        fig = go.Figure(go.Bar(x=series.values, y=series.index, orientation='h', marker_color=colors))
-        fig.update_layout(title=f'Feature correlations with RUL - {battery.cell_id}', xaxis_title='Correlation with RUL', template='plotly_white')
+        plt.figure(figsize=(10, max(6, len(series) * 0.35)))
+        y_pos = np.arange(len(series))
+        plt.barh(y_pos, series.values, color=colors, alpha=0.85)
+        plt.yticks(y_pos, series.index)
+        plt.xlabel('Correlation with RUL')
+        plt.title(f'Feature correlations with RUL - {battery.cell_id}')
+        plt.grid(True, alpha=0.3, axis='x')
+        for i, v in enumerate(series.values):
+            plt.text(v + (0.01 if v >= 0 else -0.01), i, f'{v:.3f}', va='center', ha='left' if v >= 0 else 'right')
         safe_id = self._safe_filename(battery.cell_id)
         out_path = self.rul_bars_dir / f"{safe_id}_rul_correlations.png"
+        out_path.parent.mkdir(parents=True, exist_ok=True)
         try:
-            fig.write_image(str(out_path), scale=2)
+            plt.savefig(out_path, dpi=300, bbox_inches='tight')
         except Exception:
             pass
+        finally:
+            plt.close()
 
     # ---------------------
     # High-level operations
@@ -288,18 +307,28 @@ class ChemistryCorrelationAnalyzer:
             n_chunk_corrs = corrs[start:end]
             colors = ['red' if v < 0 else ('blue' if v > 0 else 'gray') for v in n_chunk_corrs]
 
-            fig = go.Figure()
-            fig.add_trace(go.Scatter(x=list(range(n_chunk)), y=n_chunk_corrs, mode='lines+markers', name='corr'))
-            fig.add_hline(y=mean_val, line_dash='dash', line_color='green', annotation_text=f'Mean {mean_val:.3f}', annotation_position='top left')
-            fig.add_hline(y=median_val, line_dash='dot', line_color='purple', annotation_text=f'Median {median_val:.3f}', annotation_position='bottom left')
-            fig.add_shape(type='rect', x0=-0.5, x1=n_chunk-0.5, y0=mean_val - std_val, y1=mean_val + std_val, line=dict(color='green', width=0), fillcolor='rgba(0,128,0,0.08)')
+            plt.figure(figsize=(max(12, min(0.6 * n_chunk, 28)), 6))
+            plt.plot(range(n_chunk), n_chunk_corrs, color='0.4', linewidth=1.5, alpha=0.9)
+            plt.scatter(range(n_chunk), n_chunk_corrs, c=colors, s=30, zorder=3)
+            plt.axhline(mean_val, color='green', linestyle='--', linewidth=1.1, label=f'Mean {mean_val:.3f}')
+            plt.axhline(median_val, color='purple', linestyle=':', linewidth=1.1, label=f'Median {median_val:.3f}')
+            plt.fill_between(range(n_chunk), mean_val - std_val, mean_val + std_val, color='green', alpha=0.08, label='±1σ')
+            plt.xticks(range(n_chunk), n_chunk_names, rotation=45, ha='right')
+            plt.ylabel(f'Correlation of {feature} with RUL')
+            plt.xlabel('Battery')
             title_suffix = f" (part {p+1}/{pages})" if pages > 1 else ""
-            fig.update_layout(title=f'{feature}–RUL Correlation Across Batteries (sorted){title_suffix}', xaxis=dict(tickmode='array', tickvals=list(range(n_chunk)), ticktext=n_chunk_names), yaxis_title=f'Correlation of {feature} with RUL', xaxis_title='Battery', template='plotly_white')
+            plt.title(f'{feature}–RUL Correlation Across Batteries (sorted){title_suffix}')
+            plt.grid(True, alpha=0.3, axis='y')
+            plt.legend(loc='best', fontsize=9)
             fname = f'{feature}_corr_vs_batteries' + (f'_part{p+1}' if pages > 1 else '') + '.png'
+            (self.feature_vs_batt_dir).mkdir(parents=True, exist_ok=True)
             try:
-                fig.write_image(str(self.feature_vs_batt_dir / fname), scale=2)
+                plt.tight_layout()
+                plt.savefig(self.feature_vs_batt_dir / fname, dpi=300, bbox_inches='tight')
             except Exception:
                 pass
+            finally:
+                plt.close()
 
     def plot_feature_rul_correlation_boxplot(self):
         rows = []
@@ -313,13 +342,22 @@ class ChemistryCorrelationAnalyzer:
         df = pd.DataFrame(rows)
         num_feats = df['feature'].nunique()
         fig_w = max(12, min(1.0 * num_feats, 36))
-        fig = px.box(df, x='feature', y='corr', points='outliers', title='Feature–RUL Correlation Distributions Across Batteries')
-        fig.add_hline(y=0.0, line_color='gray')
-        fig.update_layout(template='plotly_white')
+        plt.figure(figsize=(max(12, min(1.0 * num_feats, 36)), 6))
+        sns.boxplot(data=df, x='feature', y='corr')
+        plt.axhline(0.0, color='0.5', linewidth=1)
+        plt.ylabel('Correlation with RUL')
+        plt.xlabel('Feature')
+        plt.title('Feature–RUL Correlation Distributions Across Batteries')
+        plt.xticks(rotation=45, ha='right')
+        out_path = self.feature_box_dir / 'feature_rul_correlation_boxplot.png'
+        out_path.parent.mkdir(parents=True, exist_ok=True)
         try:
-            fig.write_image(str(self.feature_box_dir / 'feature_rul_correlation_boxplot.png'), scale=2)
+            plt.tight_layout()
+            plt.savefig(out_path, dpi=300, bbox_inches='tight')
         except Exception:
             pass
+        finally:
+            plt.close()
 
 
 def register_default_features(analyzer: ChemistryCorrelationAnalyzer):

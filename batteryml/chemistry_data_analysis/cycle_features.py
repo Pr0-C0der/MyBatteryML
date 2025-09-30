@@ -166,6 +166,31 @@ class DatasetSpecificCycleFeatures(BaseCycleFeatures, ABC):
         raise NotImplementedError
 
     # ---------- Features dependent on charge/discharge windowing ----------
+    def charge_cycle_length(self, battery: BatteryData, cycle) -> Optional[float]:
+        """Duration of the charge segment based on dataset-specific window indices."""
+        t = _to_array(getattr(cycle, 'time_in_s', []))
+        if t.size == 0:
+            return None
+        n = int(t.size)
+        cs, ce = self.charge_window_indices(battery, cycle)
+        cs = max(0, min(cs, n - 1)); ce = max(0, min(ce, n - 1))
+        if ce < cs:
+            return None
+        dt = float(t[ce] - t[cs])
+        return dt if np.isfinite(dt) and dt >= 0 else None
+
+    def discharge_cycle_length(self, battery: BatteryData, cycle) -> Optional[float]:
+        """Duration of the discharge segment based on dataset-specific window indices."""
+        t = _to_array(getattr(cycle, 'time_in_s', []))
+        if t.size == 0:
+            return None
+        n = int(t.size)
+        ds, de = self.discharge_window_indices(battery, cycle)
+        ds = max(0, min(ds, n - 1)); de = max(0, min(de, n - 1))
+        if de < ds:
+            return None
+        dt = float(t[de] - t[ds])
+        return dt if np.isfinite(dt) and dt >= 0 else None
     def avg_charge_c_rate(self, battery: BatteryData, cycle) -> Optional[float]:
         I = _to_array(getattr(cycle, 'current_in_A', []))
         t = _to_array(getattr(cycle, 'time_in_s', []))
