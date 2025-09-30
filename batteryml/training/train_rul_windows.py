@@ -609,8 +609,13 @@ def run(dataset: str, data_path: str, output_dir: str, window_size: int, feature
 
     def _inverse_label_transform(yt: np.ndarray, stats: dict) -> np.ndarray:
         mu = stats['mu']; sigma = stats['sigma']
+        yt = np.asarray(yt, dtype=float)
+        yt = np.nan_to_num(yt, nan=0.0, posinf=0.0, neginf=0.0)
         y_log = yt * sigma + mu
+        # Prevent overflow in expm1
+        y_log = np.clip(y_log, a_min=-50.0, a_max=709.0)
         y = np.expm1(y_log)
+        y = np.nan_to_num(y, nan=0.0, posinf=np.finfo(float).max, neginf=0.0)
         return np.clip(y, a_min=0.0, a_max=None)
 
     # Fit transform on full training labels for final model
@@ -740,7 +745,11 @@ def run(dataset: str, data_path: str, output_dir: str, window_size: int, feature
                         model.set_params(**params)
                         model.fit(X_tr, y_tr_t)
                         pred_t = model.predict(X_va)
-                        pred = _inverse_label_transform(np.asarray(pred_t, dtype=float), fold_stats)
+                        pred_t = np.asarray(pred_t, dtype=float)
+                        pred_t = np.nan_to_num(pred_t, nan=0.0, posinf=0.0, neginf=0.0)
+                        # Clamp transformed predictions to reasonable range before inverse transform
+                        pred_t = np.clip(pred_t, a_min=-50.0, a_max=50.0)
+                        pred = _inverse_label_transform(pred_t, fold_stats)
                         y_va_arr = np.asarray(y_va, dtype=float)
                         fold_maes.append(mean_absolute_error(y_va_arr, np.asarray(pred, dtype=float)))
                         fold_rmses.append(mean_squared_error(y_va_arr, np.asarray(pred, dtype=float)) ** 0.5)
@@ -763,7 +772,10 @@ def run(dataset: str, data_path: str, output_dir: str, window_size: int, feature
             est = clone(pipe).set_params(**best_params)
         est.fit(X_train, y_train_t)
         y_pred_t = est.predict(X_test)
-        y_pred = _inverse_label_transform(np.asarray(y_pred_t, dtype=float), train_label_stats)
+        y_pred_t = np.asarray(y_pred_t, dtype=float)
+        y_pred_t = np.nan_to_num(y_pred_t, nan=0.0, posinf=0.0, neginf=0.0)
+        y_pred_t = np.clip(y_pred_t, a_min=-50.0, a_max=50.0)
+        y_pred = _inverse_label_transform(y_pred_t, train_label_stats)
         mae = mean_absolute_error(y_test, y_pred)
         rmse = mean_squared_error(y_test, y_pred) ** 0.5
         row = {'model': name, 'MAE': float(mae), 'RMSE': float(rmse)}
