@@ -6,6 +6,9 @@ import sys
 
 import numpy as np
 import pandas as pd
+import matplotlib
+matplotlib.use('Agg')
+import matplotlib.pyplot as plt
 
 
 def format_rmse(df: pd.DataFrame, threshold: float = 1000.0) -> pd.DataFrame:
@@ -55,6 +58,55 @@ def main():
         print(f"Saved formatted table to {out_csv}")
     except Exception:
         pass
+
+    # Also save a PNG with bold minimum values per column
+    try:
+        # Build cell text
+        col_labels = list(df_fmt.columns)
+        row_labels = list(df_fmt.index)
+        cell_text = [[str(df_fmt.loc[row, col]) for col in col_labels] for row in row_labels]
+
+        # Determine minima per column using numeric df
+        numeric_df = df.apply(pd.to_numeric, errors='coerce').replace([np.inf, -np.inf], np.nan)
+        min_rows_per_col = {}
+        for j, col in enumerate(col_labels):
+            col_vals = numeric_df[col]
+            if col_vals.dropna().empty:
+                min_rows_per_col[j] = set()
+                continue
+            min_val = col_vals.min()
+            min_idxs = set(col_vals.index[col_vals == min_val])
+            min_rows_per_col[j] = min_idxs
+
+        nrows, ncols = len(row_labels), len(col_labels)
+        fig_w = max(8, ncols * 2)
+        fig_h = max(2, nrows * 0.5 + 2)
+        fig, ax = plt.subplots(figsize=(fig_w, fig_h))
+        ax.axis('off')
+        the_table = ax.table(cellText=cell_text, rowLabels=row_labels, colLabels=col_labels, loc='center', cellLoc='center')
+        the_table.auto_set_font_size(False)
+        the_table.set_fontsize(9)
+        the_table.scale(1, 1.2)
+
+        # Bold minima: data cells start at (row+1, col+1)
+        row_pos = {idx: i for i, idx in enumerate(row_labels)}
+        for j in range(ncols):
+            for idx in min_rows_per_col.get(j, set()):
+                if idx in row_pos:
+                    r = row_pos[idx] + 1
+                    c = j + 1
+                    try:
+                        the_table[(r, c)].get_text().set_weight('bold')
+                    except Exception:
+                        pass
+
+        out_png = rmse_path.with_name('RMSE_display.png')
+        fig.tight_layout()
+        fig.savefig(out_png, dpi=200, bbox_inches='tight')
+        plt.close(fig)
+        print(f"Saved formatted PNG to {out_png}")
+    except Exception as e:
+        print(f"[warn] failed to save PNG: {e}")
 
 
 if __name__ == '__main__':
