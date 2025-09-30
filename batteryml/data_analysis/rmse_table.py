@@ -105,19 +105,7 @@ def main():
         the_table.set_fontsize(9)
         the_table.scale(1, 1.2)
 
-        # Highlight minima: data cells start at (row+1, col+1)
-        row_pos = {idx: i for i, idx in enumerate(row_labels)}
-        for j in range(ncols):
-            for idx in min_rows_per_col.get(j, set()):
-                if idx in row_pos:
-                    r = row_pos[idx] + 1
-                    c = j + 1
-                    try:
-                        cell = the_table[(r, c)]
-                        cell.get_text().set_weight('bold')
-                        cell.set_facecolor('#d4edda')  # light green
-                    except Exception:
-                        pass
+        # Minima are no longer bolded or highlighted per request.
 
         out_png = rmse_path.with_name('RMSE_display.png')
         fig.tight_layout()
