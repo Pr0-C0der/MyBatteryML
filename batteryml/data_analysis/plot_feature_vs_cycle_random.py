@@ -102,15 +102,28 @@ def _default_feature_names() -> List[str]:
     ]
 
 
+def _moving_mean(y: np.ndarray, window: int) -> np.ndarray:
+    if window is None or int(window) <= 1:
+        return y
+    w = int(window)
+    try:
+        kernel = np.ones(w, dtype=float) / float(w)
+        return np.convolve(y, kernel, mode='same')
+    except Exception:
+        return y
+
+
 def run(data_path: str,
+        dataset: str,
         features: List[str],
         n_samples: int,
         output_dir: str,
         caps: List[int],
         seed: int,
+        lag_window: int,
         verbose: bool):
     data_dir = Path(data_path)
-    out_dir = Path(output_dir)
+    out_dir = Path(output_dir) / str(dataset)
     out_dir.mkdir(parents=True, exist_ok=True)
 
     files = sorted(data_dir.glob('*.pkl'))
@@ -138,10 +151,14 @@ def run(data_path: str,
             feat_dir = out_dir / feature
             indiv_dir = feat_dir / 'individual_caps'
             merged_dir = feat_dir / 'merged'
+            mm_dir = feat_dir / 'moving_mean'
             indiv_dir.mkdir(parents=True, exist_ok=True)
             merged_dir.mkdir(parents=True, exist_ok=True)
+            mm_dir.mkdir(parents=True, exist_ok=True)
 
             saved_paths: List[Path] = []
+            saved_mm_paths: List[Path] = []
+            y_sm = _moving_mean(y, lag_window)
             prev = 0
             for cap in caps:
                 fig, ax = plt.subplots(figsize=(10, 6))
@@ -167,14 +184,41 @@ def run(data_path: str,
                 if verbose and merged_ok:
                     print(f"[ok] merged -> {merged_path}")
 
+            # Build moving-mean segments and merge
+            prev = 0
+            for cap in caps:
+                fig, ax = plt.subplots(figsize=(10, 6))
+                ok = _plot_single_cap(ax, x, y_sm, prev, cap)
+                ax.set_xlabel('Cycle number')
+                ax.set_ylabel(feature.replace('_', ' ').title())
+                ax.set_title(f"{feature.replace('_', ' ').title()} (moving mean w={lag_window}) — {b.cell_id} ({prev}–{cap})")
+                ax.grid(True, alpha=0.3)
+                fig.tight_layout()
+                mm_seg = mm_dir / f"{_safe_id(b.cell_id)}_{feature}_mm_w{lag_window}_range_{prev}_{cap}.png"
+                if ok:
+                    fig.savefig(mm_seg, dpi=300, bbox_inches='tight')
+                    saved_mm_paths.append(mm_seg)
+                plt.close(fig)
+                if verbose:
+                    print(f"[ok] saved {mm_seg}")
+                prev = cap
+
+            if saved_mm_paths:
+                mm_merged = mm_dir / f"{_safe_id(b.cell_id)}_{feature}_mm_w{lag_window}_merged.png"
+                mm_ok = _merge_images_horiz(saved_mm_paths, mm_merged)
+                if verbose and mm_ok:
+                    print(f"[ok] merged (moving mean) -> {mm_merged}")
+
 
 def main():
-    parser = argparse.ArgumentParser(description='Plot feature vs cycle for random MATR batteries with multiple cycle caps; separate per-cap images then merged')
-    parser.add_argument('--data_path', type=str, required=True, help='Path to MATR preprocessed directory (contains *.pkl)')
+    parser = argparse.ArgumentParser(description='Plot feature vs cycle for random batteries with multiple cycle caps; separate per-cap images then merged (with optional moving mean).')
+    parser.add_argument('--dataset', type=str, required=True, choices=['MATR', 'CALCE', 'CRUH', 'CRUSH', 'HUST', 'SNL', 'MIX100', 'MATR1', 'MATR2', 'CLO'], help='Dataset name (used only for naming/output)')
+    parser.add_argument('--data_path', type=str, required=True, help='Path to preprocessed directory (contains *.pkl) for the chosen dataset')
     parser.add_argument('--feature', type=str, default='default', help="Feature name or 'default' to use the default set from training")
     parser.add_argument('--n', type=int, default=30, help='Number of random batteries to plot')
     parser.add_argument('--output_dir', type=str, default='feature_vs_cycle_random', help='Output directory for plots')
-    parser.add_argument('--caps', type=int, nargs='*', default=[100, 200, 500], help='Cycle caps to overlay (e.g., 100 200 500)')
+    parser.add_argument('--caps', type=int, nargs='*', default=[100, 200, 500], help='Cycle caps for contiguous segments (e.g., 100 200 500)')
+    parser.add_argument('--lag_window', type=int, default=5, help='Moving mean window (default 5)')
     parser.add_argument('--seed', type=int, default=42, help='Random seed')
     parser.add_argument('--verbose', action='store_true', help='Verbose logging')
     args = parser.parse_args()
@@ -184,7 +228,7 @@ def main():
         features = _default_feature_names()
     else:
         features = [args.feature]
-    run(args.data_path, features, args.n, args.output_dir, args.caps, args.seed, args.verbose)
+    run(args.data_path, args.dataset, features, args.n, args.output_dir, args.caps, args.seed, args.lag_window, args.verbose)
 
 
 if __name__ == '__main__':

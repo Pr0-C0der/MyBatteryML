@@ -1,1 +1,1 @@
-python -m batteryml.data_analysis.plot_feature_vs_cycle_random --data_path data/preprocessed/MATR --feature max_discharge_capacity --n 2 --caps 100 200 500 --output_dir feature_vs_cycle_random --verbose
+python -m batteryml.data_analysis.plot_feature_vs_cycle_random --data_path data/preprocessed/MATR --feature default --n 2 --caps 100 200 500 --output_dir feature_vs_cycle_random --verbose
