@@ -308,11 +308,7 @@ class DatasetSpecificCycleFeatures(BaseCycleFeatures, ABC):
         val = t_charge / t_discharge
         return float(val) if np.isfinite(val) else None
 
-    # ---------- Independent but dataset-specific ----------
-    @abstractmethod
-    def peak_cv_length(self, battery: BatteryData, cycle) -> float:
-        """Return the duration/length of the peak constant-voltage segment."""
-        raise NotImplementedError
+    # Note: peak_cv_length intentionally omitted for now
 
 
 # ---------------------------- Concrete dataset classes ----------------------------

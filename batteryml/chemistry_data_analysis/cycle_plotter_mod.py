@@ -314,7 +314,7 @@ def register_default_cycle_features(plotter: ChemistryCyclePlotter):
         CycleFeatureSpec('max_discharge_capacity', 'Max Discharge Capacity (Ah)', 'max_discharge_capacity', depends_on=['discharge_capacity_in_Ah']),
         CycleFeatureSpec('charge_cycle_length', 'Charge Cycle Length (s)', 'charge_cycle_length', depends_on=['current_in_A', 'time_in_s']),
         CycleFeatureSpec('discharge_cycle_length', 'Discharge Cycle Length (s)', 'discharge_cycle_length', depends_on=['current_in_A', 'time_in_s']),
-        CycleFeatureSpec('peak_cv_length', 'Peak Constant Voltage Length (s)', 'peak_cv_length', depends_on=['voltage_in_V', 'time_in_s']),
+        # peak_cv_length intentionally omitted for now
         CycleFeatureSpec('power_during_charge_cycle', 'Energy during Charge (W·s)', 'power_during_charge_cycle', depends_on=['voltage_in_V', 'current_in_A', 'time_in_s']),
         CycleFeatureSpec('power_during_discharge_cycle', 'Energy during Discharge (W·s)', 'power_during_discharge_cycle', depends_on=['voltage_in_V', 'current_in_A', 'time_in_s']),
         CycleFeatureSpec('avg_charge_c_rate', 'Avg C-rate (charge)', 'avg_charge_c_rate', depends_on=['current_in_A', 'time_in_s']),

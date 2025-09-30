@@ -280,17 +280,18 @@ class ChemistryCorrelationAnalyzer:
             n_chunk_corrs = corrs[start:end]
             colors = ['red' if v < 0 else ('blue' if v > 0 else 'gray') for v in n_chunk_corrs]
 
-        fig = go.Figure()
-        fig.add_trace(go.Scatter(x=list(range(n_chunk)), y=n_chunk_corrs, mode='lines+markers', name='corr'))
-        fig.add_hline(y=mean_val, line_dash='dash', line_color='green', annotation_text=f'Mean {mean_val:.3f}', annotation_position='top left')
-        fig.add_hline(y=median_val, line_dash='dot', line_color='purple', annotation_text=f'Median {median_val:.3f}', annotation_position='bottom left')
-        fig.add_shape(type='rect', x0=-0.5, x1=n_chunk-0.5, y0=mean_val - std_val, y1=mean_val + std_val, line=dict(color='green', width=0), fillcolor='rgba(0,128,0,0.08)')
-        fig.update_layout(title=f'{feature}–RUL Correlation Across Batteries (sorted){title_suffix}', xaxis=dict(tickmode='array', tickvals=list(range(n_chunk)), ticktext=n_chunk_names), yaxis_title=f'Correlation of {feature} with RUL', xaxis_title='Battery', template='plotly_white')
-        fname = f'{feature}_corr_vs_batteries' + (f'_part{p+1}' if pages > 1 else '') + '.png'
-        try:
-            fig.write_image(str(self.feature_vs_batt_dir / fname), scale=2)
-        except Exception:
-            pass
+            fig = go.Figure()
+            fig.add_trace(go.Scatter(x=list(range(n_chunk)), y=n_chunk_corrs, mode='lines+markers', name='corr'))
+            fig.add_hline(y=mean_val, line_dash='dash', line_color='green', annotation_text=f'Mean {mean_val:.3f}', annotation_position='top left')
+            fig.add_hline(y=median_val, line_dash='dot', line_color='purple', annotation_text=f'Median {median_val:.3f}', annotation_position='bottom left')
+            fig.add_shape(type='rect', x0=-0.5, x1=n_chunk-0.5, y0=mean_val - std_val, y1=mean_val + std_val, line=dict(color='green', width=0), fillcolor='rgba(0,128,0,0.08)')
+            title_suffix = f" (part {p+1}/{pages})" if pages > 1 else ""
+            fig.update_layout(title=f'{feature}–RUL Correlation Across Batteries (sorted){title_suffix}', xaxis=dict(tickmode='array', tickvals=list(range(n_chunk)), ticktext=n_chunk_names), yaxis_title=f'Correlation of {feature} with RUL', xaxis_title='Battery', template='plotly_white')
+            fname = f'{feature}_corr_vs_batteries' + (f'_part{p+1}' if pages > 1 else '') + '.png'
+            try:
+                fig.write_image(str(self.feature_vs_batt_dir / fname), scale=2)
+            except Exception:
+                pass
 
     def plot_feature_rul_correlation_boxplot(self):
         rows = []
@@ -322,7 +323,7 @@ def register_default_features(analyzer: ChemistryCorrelationAnalyzer):
         CycleScalarFeature('max_charge_capacity', 'max_charge_capacity'),
         CycleScalarFeature('charge_cycle_length', 'charge_cycle_length'),
         CycleScalarFeature('discharge_cycle_length', 'discharge_cycle_length'),
-        CycleScalarFeature('peak_cv_length', 'peak_cv_length'),
+        # peak_cv_length intentionally omitted for now
         CycleScalarFeature('cycle_length', 'cycle_length'),
         CycleScalarFeature('power_during_charge_cycle', 'power_during_charge_cycle'),
         CycleScalarFeature('power_during_discharge_cycle', 'power_during_discharge_cycle'),
