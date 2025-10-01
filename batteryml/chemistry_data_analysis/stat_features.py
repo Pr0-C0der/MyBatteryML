@@ -290,79 +290,81 @@ def plot_dqdv_curves_with_peaks(b: BatteryData, series: Dict[str, Tuple[np.ndarr
     if extractor is None:
         return
     from scipy.signal import find_peaks, peak_widths
-    # Plot first N cycles for clarity
-    N = min(20, len(b.cycle_data))
+    # Plot cycles at a fixed GAP (hardcoded)
+    GAP = 500
+    total = len(b.cycle_data)
+    selected_idxs = list(range(0, total, GAP)) if total > 0 else []
+    if not selected_idxs and total > 0:
+        selected_idxs = [0]
     safe_id = _safe_filename(b.cell_id)
 
     # Discharge dQ/dV
     plt.figure(figsize=(10, 6))
-    for c in b.cycle_data[:N]:
+    for idx in selected_idxs:
+        c = b.cycle_data[idx]
         res = _series_dqdv_for_cycle(b, extractor, c, mode='discharge')
         if res is None:
             continue
         Vg, dQdV = res
         plt.plot(Vg, dQdV, alpha=0.6)
     plt.xlabel('Voltage (V)'); plt.ylabel('dQ/dV (Ah/V)')
-    plt.title(f'dQ/dV Discharge (first {N}) — {b.cell_id}')
+    plt.title(f'dQ/dV Discharge (gap=500) — {b.cell_id}')
     plt.grid(True, alpha=0.3)
     StatsPlotter._save_png(out_dir / 'dqdv_discharge' / f'{safe_id}_dqdv_discharge.png')
 
     # Peaks on the first discharge curve (if available)
-    if N > 0:
-        for c in b.cycle_data[:1]:
-            res = _series_dqdv_for_cycle(b, extractor, c, mode="discharge")
-            if res is None:
-                break
+    if selected_idxs:
+        c = b.cycle_data[selected_idxs[0]]
+        res = _series_dqdv_for_cycle(b, extractor, c, mode="discharge")
+        if res is not None:
             Vg, dQdV = res
             m = np.isfinite(dQdV)
-            if not np.any(m):
-                break
-            y = dQdV[m]; x = Vg[m]
-            peaks, props = find_peaks(y, prominence=np.nanmax(np.abs(y)) * 0.05 if np.any(np.isfinite(y)) else 0.05)
-            _ = peak_widths(y, peaks, rel_height=0.5)
-            plt.figure(figsize=(10, 6))
-            plt.plot(x, y)
-            if peaks.size:
-                plt.plot(x[peaks], y[peaks], 'ro')
-            plt.xlabel('Voltage (V)'); plt.ylabel('dQ/dV (Ah/V)')
-            plt.title(f'dQ/dV Discharge Peaks — {b.cell_id}')
-            plt.grid(True, alpha=0.3)
-            StatsPlotter._save_png(out_dir / 'dqdv_discharge' / f'{safe_id}_dqdv_discharge_peaks.png')
+            if np.any(m):
+                y = dQdV[m]; x = Vg[m]
+                peaks, props = find_peaks(y, prominence=np.nanmax(np.abs(y)) * 0.05 if np.any(np.isfinite(y)) else 0.05)
+                _ = peak_widths(y, peaks, rel_height=0.5)
+                plt.figure(figsize=(10, 6))
+                plt.plot(x, y)
+                if peaks.size:
+                    plt.plot(x[peaks], y[peaks], 'ro')
+                plt.xlabel('Voltage (V)'); plt.ylabel('dQ/dV (Ah/V)')
+                plt.title(f'dQ/dV Discharge Peaks — {b.cell_id}')
+                plt.grid(True, alpha=0.3)
+                StatsPlotter._save_png(out_dir / 'dqdv_discharge' / f'{safe_id}_dqdv_discharge_peaks.png')
 
     # Charge dQ/dV
     plt.figure(figsize=(10, 6))
-    for c in b.cycle_data[:N]:
+    for idx in selected_idxs:
+        c = b.cycle_data[idx]
         res = _series_dqdv_for_cycle(b, extractor, c, mode='charge')
         if res is None:
             continue
         Vg, dQdV = res
         plt.plot(Vg, dQdV, alpha=0.6)
     plt.xlabel('Voltage (V)'); plt.ylabel('dQ/dV (Ah/V)')
-    plt.title(f'dQ/dV Charge (first {N}) — {b.cell_id}')
+    plt.title(f'dQ/dV Charge (gap=500) — {b.cell_id}')
     plt.grid(True, alpha=0.3)
     StatsPlotter._save_png(out_dir / 'dqdv_charge' / f'{safe_id}_dqdv_charge.png')
 
     # Peaks on the first charge curve (if available)
-    if N > 0:
-        for c in b.cycle_data[:1]:
-            res = _series_dqdv_for_cycle(b, extractor, c, mode="charge")
-            if res is None:
-                break
+    if selected_idxs:
+        c = b.cycle_data[selected_idxs[0]]
+        res = _series_dqdv_for_cycle(b, extractor, c, mode="charge")
+        if res is not None:
             Vg, dQdV = res
             m = np.isfinite(dQdV)
-            if not np.any(m):
-                break
-            y = dQdV[m]; x = Vg[m]
-            peaks, props = find_peaks(y, prominence=np.nanmax(np.abs(y)) * 0.05 if np.any(np.isfinite(y)) else 0.05)
-            _ = peak_widths(y, peaks, rel_height=0.5)
-            plt.figure(figsize=(10, 6))
-            plt.plot(x, y)
-            if peaks.size:
-                plt.plot(x[peaks], y[peaks], 'ro')
-            plt.xlabel('Voltage (V)'); plt.ylabel('dQ/dV (Ah/V)')
-            plt.title(f'dQ/dV Charge Peaks — {b.cell_id}')
-            plt.grid(True, alpha=0.3)
-            StatsPlotter._save_png(out_dir / 'dqdv_charge' / f'{safe_id}_dqdv_charge_peaks.png')
+            if np.any(m):
+                y = dQdV[m]; x = Vg[m]
+                peaks, props = find_peaks(y, prominence=np.nanmax(np.abs(y)) * 0.05 if np.any(np.isfinite(y)) else 0.05)
+                _ = peak_widths(y, peaks, rel_height=0.5)
+                plt.figure(figsize=(10, 6))
+                plt.plot(x, y)
+                if peaks.size:
+                    plt.plot(x[peaks], y[peaks], 'ro')
+                plt.xlabel('Voltage (V)'); plt.ylabel('dQ/dV (Ah/V)')
+                plt.title(f'dQ/dV Charge Peaks — {b.cell_id}')
+                plt.grid(True, alpha=0.3)
+                StatsPlotter._save_png(out_dir / 'dqdv_charge' / f'{safe_id}_dqdv_charge_peaks.png')
 
 
 # -----------------
@@ -385,20 +387,20 @@ def plot_relative_capacity_fade_abs(b: BatteryData, series: Dict[str, Tuple[np.n
     StatsPlotter._save_png(out_dir / fname)
 
 
-def plot_capacity_retention_ratio(b: BatteryData, series: Dict[str, Tuple[np.ndarray, np.ndarray]], out_dir: Path, extractor: Optional[DatasetSpecificCycleFeatures] = None):
+def plot_capacity_retention_ratio(battery: BatteryData, series: Dict[str, Tuple[np.ndarray, np.ndarray]], out_dir: Path, extractor: Optional[DatasetSpecificCycleFeatures] = None):
     xs, cap = series['discharge_capacity_final']
     if xs.size == 0:
         return
-    if cap.size == 0 or not np.isfinite(cap[0]):
+    if cap.size == 0 or not np.isfinite(cap[0]) or cap[0] == 0:
         return
-    ratio = np.abs(cap - cap[0])
+    ratio = cap / cap[0]
     plt.figure(figsize=(10, 6))
     plt.plot(xs, ratio, marker='o', linewidth=1.6, alpha=0.9)
     plt.xlabel('Cycle Number')
-    plt.ylabel('|cap(n) - cap(0)| (Ah)')
-    plt.title(f'Capacity Retention Ratio — {b.cell_id}')
+    plt.ylabel('Capacity Retention Ratio = cap(n)/cap(0)')
+    plt.title(f'Capacity Retention Ratio — {battery.cell_id}')
     plt.grid(True, alpha=0.3)
-    fname = _safe_filename(b.cell_id) + '_capacity_retention.png'
+    fname = _safe_filename(battery.cell_id) + '_capacity_retention.png'
     StatsPlotter._save_png(out_dir / fname)
 
 

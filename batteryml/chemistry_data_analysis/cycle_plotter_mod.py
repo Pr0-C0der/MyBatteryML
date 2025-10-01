@@ -56,6 +56,30 @@ class ChemistryCyclePlotter:
         # Chemistry subfolder name inferred from data_path
         self._chemistry_name = self.data_path.name
 
+    # -------------
+    # Smoothing (moving average for feature vs cycle plots)
+    # -------------
+    _MA_WINDOW: int = 5
+
+    @staticmethod
+    def _moving_average(y: np.ndarray, window: int) -> np.ndarray:
+        try:
+            arr = np.asarray(y, dtype=float)
+            if window is None or int(window) <= 1 or arr.size == 0:
+                return arr
+            w = int(window)
+            kernel = np.ones(w, dtype=float)
+            # handle NaNs robustly
+            mask = np.isfinite(arr).astype(float)
+            arr0 = np.nan_to_num(arr, nan=0.0)
+            num = np.convolve(arr0, kernel, mode='same')
+            den = np.convolve(mask, kernel, mode='same')
+            out = num / np.maximum(den, 1e-8)
+            out[den < 1e-8] = np.nan
+            return out
+        except Exception:
+            return y
+
     @staticmethod
     def _safe_filename(name: str) -> str:
         # Replace characters invalid on Windows filesystems and collapse whitespace
@@ -234,7 +258,8 @@ class ChemistryCyclePlotter:
             return False
         xs_s = xs_s[m]; ys_s = ys_s[m]
         plt.figure(figsize=(10, 6))
-        plt.plot(xs_s, ys_s, marker='o', linewidth=1.6, alpha=0.9)
+        ys_sm = self._moving_average(ys_s, self._MA_WINDOW)
+        plt.plot(xs_s, ys_sm, marker='o', linewidth=1.6, alpha=0.9)
         plt.title(f'{spec.name.title()} vs Cycle Number - {battery.cell_id}')
         plt.xlabel('Cycle Number')
         plt.ylabel(spec.ylabel or spec.name.replace('_', ' ').title())
@@ -277,6 +302,7 @@ class ChemistryCyclePlotter:
             self.plot_battery(f, b)
 
 
+
 # ---------------------------------
 # Default feature registration utils
 # ---------------------------------
@@ -315,10 +341,11 @@ def register_default_cycle_features(plotter: ChemistryCyclePlotter):
         CycleFeatureSpec('charge_cycle_length', 'Charge Cycle Length (s)', 'charge_cycle_length', depends_on=['current_in_A', 'time_in_s']),
         CycleFeatureSpec('discharge_cycle_length', 'Discharge Cycle Length (s)', 'discharge_cycle_length', depends_on=['current_in_A', 'time_in_s']),
         # peak_cv_length intentionally omitted for now
-        CycleFeatureSpec('power_during_charge_cycle', 'Energy during Charge (W·s)', 'power_during_charge_cycle', depends_on=['voltage_in_V', 'current_in_A', 'time_in_s']),
-        CycleFeatureSpec('power_during_discharge_cycle', 'Energy during Discharge (W·s)', 'power_during_discharge_cycle', depends_on=['voltage_in_V', 'current_in_A', 'time_in_s']),
+        CycleFeatureSpec('energy_during_charge_cycle', 'Energy during Charge (W·s)', 'power_during_charge_cycle', depends_on=['voltage_in_V', 'current_in_A', 'time_in_s']),
+        CycleFeatureSpec('energy_during_discharge_cycle', 'Energy during Discharge (W·s)', 'power_during_discharge_cycle', depends_on=['voltage_in_V', 'current_in_A', 'time_in_s']),
         CycleFeatureSpec('avg_charge_c_rate', 'Avg C-rate (charge)', 'avg_charge_c_rate', depends_on=['current_in_A', 'time_in_s']),
         CycleFeatureSpec('avg_discharge_c_rate', 'Avg C-rate (discharge)', 'avg_discharge_c_rate', depends_on=['current_in_A', 'time_in_s']),
+        CycleFeatureSpec('max_charge_c_rate', 'Max C-rate (charge)', 'max_charge_c_rate', depends_on=['current_in_A']),
         CycleFeatureSpec('charge_to_discharge_time_ratio', 'Charge/Discharge Time Ratio', 'charge_to_discharge_time_ratio', depends_on=['current_in_A', 'time_in_s']),
     ]
     for spec in specs:

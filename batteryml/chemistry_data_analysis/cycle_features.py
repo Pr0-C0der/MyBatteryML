@@ -235,6 +235,24 @@ class DatasetSpecificCycleFeatures(BaseCycleFeatures, ABC):
         val = q_as / (C_nom * 3600.0)
         return float(val) if np.isfinite(val) else None
 
+    def max_charge_c_rate(self, battery: BatteryData, cycle) -> Optional[float]:
+        """Maximum instantaneous C-rate during charge window: max(|I|)/C_nom."""
+        I = _to_array(getattr(cycle, 'current_in_A', []))
+        C_nom = battery.nominal_capacity_in_Ah or 0.0
+        if I.size == 0 or not C_nom:
+            return None
+        n = int(I.size)
+        cs, ce = self.charge_window_indices(battery, cycle)
+        cs = max(0, min(cs, n - 1)); ce = max(0, min(ce, n - 1))
+        if ce < cs:
+            return None
+        Iw = I[cs:ce + 1]
+        Iw = Iw[np.isfinite(Iw)]
+        if Iw.size == 0:
+            return None
+        val = float(np.nanmax(np.abs(Iw)) / C_nom)
+        return val if np.isfinite(val) else None
+
     def avg_charge_capacity(self, battery: BatteryData, cycle) -> Optional[float]:
         Qc = _to_array(getattr(cycle, 'charge_capacity_in_Ah', []))
         t = _to_array(getattr(cycle, 'time_in_s', []))

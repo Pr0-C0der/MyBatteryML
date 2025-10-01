@@ -371,9 +371,10 @@ def register_default_features(analyzer: ChemistryCorrelationAnalyzer):
         CycleScalarFeature('discharge_cycle_length', 'discharge_cycle_length'),
         # peak_cv_length intentionally omitted for now
         CycleScalarFeature('cycle_length', 'cycle_length'),
-        CycleScalarFeature('power_during_charge_cycle', 'power_during_charge_cycle'),
-        CycleScalarFeature('power_during_discharge_cycle', 'power_during_discharge_cycle'),
+        CycleScalarFeature('energy_during_charge_cycle', 'power_during_charge_cycle'),
+        CycleScalarFeature('energy_during_discharge_cycle', 'power_during_discharge_cycle'),
         CycleScalarFeature('avg_charge_c_rate', 'avg_charge_c_rate'),
+        CycleScalarFeature('max_charge_c_rate', 'max_charge_c_rate'),
         CycleScalarFeature('avg_discharge_c_rate', 'avg_discharge_c_rate'),
         CycleScalarFeature('charge_to_discharge_time_ratio', 'charge_to_discharge_time_ratio'),
     ]
