@@ -280,6 +280,13 @@ class ChemistryCombinedPlotter:
             ax2.set_ylabel('Max Discharge Capacity (Ah)', color='red')
             ax2.tick_params(axis='y', labelcolor='red')
 
+            # Hardcoded vertical cycle markers
+            for xv in [100, 200, 500]:
+                try:
+                    ax1.axvline(x=xv, color='darkgoldenrod', linestyle=':', linewidth=1.2, alpha=0.9)
+                except Exception:
+                    pass
+
             fig.suptitle(f'{spec.feature_name.replace("_", " ").title()} vs Max Discharge Capacity — {b.cell_id}')
 
             out_dir = self.output_dir / self.chem_name / 'feature_vs_cycle_graphs_combined' / spec.feature_name
