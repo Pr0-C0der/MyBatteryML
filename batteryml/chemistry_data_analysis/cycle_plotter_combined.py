@@ -22,7 +22,7 @@ class CombinedSpec:
 
 class ChemistryCombinedPlotter:
 
-    def __init__(self, data_path: str, output_dir: str = "chemistry_cycle_plots_combined", verbose: bool = False, dataset_hint: Optional[str] = None, ma_window: int = 0):
+    def __init__(self, data_path: str, output_dir: str = "chemistry_cycle_plots_combined", verbose: bool = False, dataset_hint: Optional[str] = None, ma_window: int = 0, smoothing: str = 'none', remove_after_percentile: Optional[float] = None):
         self.data_path = Path(data_path)
         self.output_dir = Path(output_dir)
         self.verbose = bool(verbose)
@@ -30,6 +30,8 @@ class ChemistryCombinedPlotter:
         self.output_dir.mkdir(parents=True, exist_ok=True)
         self.chem_name = self.data_path.name
         self.ma_window = int(ma_window) if int(ma_window) > 1 else 0
+        self.smoothing = str(smoothing or 'none').lower()
+        self.remove_after_percentile = float(remove_after_percentile) if remove_after_percentile is not None else None
 
         # Combined pairs: (feature vs max_discharge_capacity)
         self.specs: List[CombinedSpec] = [
@@ -62,6 +64,26 @@ class ChemistryCombinedPlotter:
             den = np.convolve(mask, kernel, mode='same')
             out = num / np.maximum(den, 1e-8)
             out[den < 1e-8] = np.nan
+            return out
+        except Exception:
+            return y
+
+    @staticmethod
+    def _moving_median(y: np.ndarray, window: int) -> np.ndarray:
+        try:
+            arr = np.asarray(y, dtype=float)
+            if window is None or int(window) <= 1 or arr.size == 0:
+                return arr
+            w = int(window)
+            if w < 1:
+                return arr
+            pad = w // 2
+            padded = np.pad(arr, (pad, pad), mode='edge')
+            out = np.empty_like(arr)
+            for i in range(arr.size):
+                seg = padded[i:i + w]
+                m = np.isfinite(seg)
+                out[i] = np.nanmedian(seg[m]) if np.any(m) else np.nan
             return out
         except Exception:
             return y
@@ -147,7 +169,6 @@ class ChemistryCombinedPlotter:
         if base is None:
             return
         x_base, y_base = base
-        y_base_sm = self._moving_average(y_base, self._MA_WINDOW)
         for spec in self.specs:
             other = self._collect_series(b, extractor, spec.method_name)
             if other is None:
@@ -160,8 +181,35 @@ class ChemistryCombinedPlotter:
             idx_b = np.isin(x_base, x)
             idx_o = np.isin(x_other, x)
             xb = x_base[idx_b]
-            yb = self._moving_average(y_base[idx_b], self.ma_window) if self.ma_window else y_base[idx_b]
-            yo = self._moving_average(y_other[idx_o], self.ma_window) if self.ma_window else y_other[idx_o]
+            if self.ma_window and self.smoothing == 'ma':
+                yb = self._moving_average(y_base[idx_b], self.ma_window)
+                yo = self._moving_average(y_other[idx_o], self.ma_window)
+            elif self.ma_window and self.smoothing == 'median':
+                yb = self._moving_median(y_base[idx_b], self.ma_window)
+                yo = self._moving_median(y_other[idx_o], self.ma_window)
+            else:
+                yb = y_base[idx_b]
+                yo = y_other[idx_o]
+
+            # Remove points beyond percentile (outlier trimming) after smoothing
+            if self.remove_after_percentile is not None and 0.0 < self.remove_after_percentile < 100.0:
+                try:
+                    p_other = np.nanpercentile(yo, self.remove_after_percentile)
+                except Exception:
+                    p_other = np.nan
+                try:
+                    p_base = np.nanpercentile(yb, self.remove_after_percentile)
+                except Exception:
+                    p_base = np.nan
+                mask = np.isfinite(yo) & np.isfinite(yb)
+                if np.isfinite(p_other):
+                    mask = mask & (yo <= p_other)
+                if np.isfinite(p_base):
+                    mask = mask & (yb <= p_base)
+                if np.any(mask):
+                    xb = xb[mask]
+                    yo = yo[mask]
+                    yb = yb[mask]
 
             fig, ax1 = plt.subplots(figsize=(10, 6))
             ax1.plot(xb, yo, color='blue', linewidth=1.6, alpha=0.9, label=spec.ylabel)
@@ -205,11 +253,13 @@ def main():
     parser.add_argument('--data_path', type=str, required=True, help='Path to directory containing *.pkl (chemistry subfolder)')
     parser.add_argument('--output_dir', type=str, default='chemistry_cycle_plots_combined', help='Output directory')
     parser.add_argument('--dataset_hint', type=str, default=None, help='Optional dataset name hint to override auto detection')
-    parser.add_argument('--ma_window', type=int, default=0, help='Moving average window for smoothing (0/1 disables, >1 enables)')
+    parser.add_argument('--ma_window', type=int, default=0, help='Smoothing window (0/1 disables, >1 enables)')
+    parser.add_argument('--smoothing', type=str, default='none', choices=['none', 'ma', 'median'], help='Smoothing method for curves')
+    parser.add_argument('--remove_after_percentile', type=float, default=None, help='Trim points above this percentile after smoothing (e.g., 90)')
     parser.add_argument('--verbose', action='store_true', help='Verbose logging')
     args = parser.parse_args()
 
-    plotter = ChemistryCombinedPlotter(args.data_path, args.output_dir, verbose=args.verbose, dataset_hint=args.dataset_hint, ma_window=args.ma_window)
+    plotter = ChemistryCombinedPlotter(args.data_path, args.output_dir, verbose=args.verbose, dataset_hint=args.dataset_hint, ma_window=args.ma_window, smoothing=args.smoothing, remove_after_percentile=args.remove_after_percentile)
     plotter.run()
 
 
