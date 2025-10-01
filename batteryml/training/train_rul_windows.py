@@ -21,6 +21,7 @@ from sklearn.svm import SVR
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.neural_network import MLPRegressor
 from tqdm import tqdm
+from scipy.signal import medfilt, savgol_filter
 
 try:
     from xgboost import XGBRegressor
@@ -117,13 +118,13 @@ def _build_cycle_feature_table(battery: BatteryData, feature_fns: Dict[str, call
 
 
 def _apply_feature_processing(dfn: pd.DataFrame,
-                              feature_names: List[str],
-                              kind: str = 'none',
-                              mm_window: int = 5,
-                              verbose: bool = False) -> pd.DataFrame:
+                             feature_names: List[str],
+                             kind: str = 'none',
+                             mm_window: int = 5,
+                             verbose: bool = False) -> pd.DataFrame:
     """Apply modular feature processing along cycle axis (sorted by cycle_number).
 
-    - kind: 'none' | 'moving_mean'
+    - kind: 'none' | 'moving_mean' | 'hms'
     - mm_window: window for moving mean (>=1)
     """
     if kind is None or kind.lower() == 'none':
@@ -141,6 +142,69 @@ def _apply_feature_processing(dfn: pd.DataFrame,
             if verbose:
                 print(f"[warn] moving_mean failed (w={w}): {e}")
             return dfn
+        return dfn
+    if kind == 'hms':
+        # Apply HMS filter per column: Hampel -> Median (size=5) -> Savitzky–Golay (wl=101, p=3)
+        try:
+            arr = dfn[cols].to_numpy(dtype=float)
+        except Exception:
+            return dfn
+        # Interpolate NaNs along cycle axis per column, then filter
+        for j, cname in enumerate(cols):
+            col = arr[:, j]
+            # Fill NaNs by linear interpolation on index
+            idx = np.arange(col.size)
+            m = np.isfinite(col)
+            if not np.any(m):
+                continue
+            try:
+                col_filled = col.copy()
+                if not np.all(m):
+                    col_filled[~m] = np.interp(idx[~m], idx[m], col[m])
+                # 1) Hampel
+                window_size = 11
+                n_sigmas = 3.0
+                half = window_size // 2
+                col_h = col_filled.copy()
+                for i in range(col_filled.size):
+                    l = max(0, i - half)
+                    r = min(col_filled.size, i + half + 1)
+                    seg = col_filled[l:r]
+                    fin = np.isfinite(seg)
+                    if not np.any(fin):
+                        continue
+                    med = float(np.nanmedian(seg[fin]))
+                    mad = float(np.nanmedian(np.abs(seg[fin] - med)))
+                    if mad <= 0:
+                        continue
+                    thr = n_sigmas * 1.4826 * mad
+                    if np.isfinite(col_filled[i]) and abs(col_filled[i] - med) > thr:
+                        col_h[i] = med
+                # 2) Median filter size=5
+                try:
+                    col_m = medfilt(col_h, kernel_size=5)
+                except Exception:
+                    col_m = col_h
+                # 3) Savitzky–Golay wl=101, p=3 (adjust to length, ensure odd)
+                try:
+                    wl = 101
+                    if col_m.size < wl:
+                        wl = col_m.size if col_m.size % 2 == 1 else max(1, col_m.size - 1)
+                    if wl >= 5:
+                        col_s = savgol_filter(col_m, window_length=wl, polyorder=3, mode='interp')
+                    else:
+                        col_s = col_m
+                except Exception:
+                    col_s = col_m
+                arr[:, j] = col_s
+            except Exception as e:
+                if verbose:
+                    print(f"[warn] hms failed for column {cname}: {e}")
+                continue
+        try:
+            dfn[cols] = arr
+        except Exception:
+            pass
         return dfn
     # Unknown kind -> no-op
     if verbose:
@@ -838,7 +902,7 @@ def main():
     parser.add_argument('--report_missing', action='store_true', help='Report per-battery, per-cycle missing features (NaNs)')
     parser.add_argument('--tune', action='store_true', help='Enable GridSearchCV with GroupKFold on training set')
     parser.add_argument('--cv_splits', type=int, default=5, help='Number of GroupKFold splits for tuning (default 5)')
-    parser.add_argument('--feature_processing', type=str, default='none', choices=['none', 'moving_mean'], help='Feature processing to apply before flattening')
+    parser.add_argument('--feature_processing', type=str, default='none', choices=['none', 'moving_mean', 'hms'], help='Feature processing to apply before flattening')
     args = parser.parse_args()
 
     run(args.dataset, args.data_path, args.output_dir, args.window_size, features=args.features, use_gpu=args.gpu,
