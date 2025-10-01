@@ -8,6 +8,7 @@ from typing import List, Optional
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
+from scipy.signal import medfilt, savgol_filter
 
 from batteryml.data.battery_data import BatteryData
 from batteryml.chemistry_data_analysis.cycle_features import get_extractor_class, DatasetSpecificCycleFeatures
@@ -85,6 +86,59 @@ class ChemistryCombinedPlotter:
                 m = np.isfinite(seg)
                 out[i] = np.nanmedian(seg[m]) if np.any(m) else np.nan
             return out
+        except Exception:
+            return y
+
+    @staticmethod
+    def _hampel_filter(y: np.ndarray, window_size: int = 11, n_sigmas: float = 3.0) -> np.ndarray:
+        arr = np.asarray(y, dtype=float)
+        n = arr.size
+        if n == 0 or window_size < 3:
+            return arr
+        w = int(window_size)
+        half = w // 2
+        out = arr.copy()
+        for i in range(n):
+            l = max(0, i - half)
+            r = min(n, i + half + 1)
+            seg = arr[l:r]
+            m = np.isfinite(seg)
+            if not np.any(m):
+                continue
+            med = float(np.nanmedian(seg[m]))
+            mad = float(np.nanmedian(np.abs(seg[m] - med)))
+            if mad <= 0:
+                continue
+            thr = n_sigmas * 1.4826 * mad
+            if np.isfinite(arr[i]) and abs(arr[i] - med) > thr:
+                out[i] = med
+        return out
+
+    @staticmethod
+    def _hms_filter(y: np.ndarray) -> np.ndarray:
+        try:
+            arr = np.asarray(y, dtype=float)
+            if arr.size == 0:
+                return arr
+            # 1) Hampel
+            h = ChemistryCombinedPlotter._hampel_filter(arr, window_size=11, n_sigmas=3.0)
+            # 2) Median filter (size=5)
+            try:
+                m = medfilt(h, kernel_size=5)
+            except Exception:
+                m = h
+            # 3) Savitzky–Golay (window_length=101, polyorder=3), adjusted to length
+            wl = 101
+            if m.size < wl:
+                wl = m.size if m.size % 2 == 1 else max(1, m.size - 1)
+            if wl >= 5 and wl > 3:
+                try:
+                    s = savgol_filter(m, window_length=wl, polyorder=3, mode='interp')
+                except Exception:
+                    s = m
+            else:
+                s = m
+            return s
         except Exception:
             return y
 
@@ -187,6 +241,9 @@ class ChemistryCombinedPlotter:
             elif self.ma_window and self.smoothing == 'median':
                 yb = self._moving_median(y_base[idx_b], self.ma_window)
                 yo = self._moving_median(y_other[idx_o], self.ma_window)
+            elif self.smoothing == 'hms':
+                yb = self._hms_filter(y_base[idx_b])
+                yo = self._hms_filter(y_other[idx_o])
             else:
                 yb = y_base[idx_b]
                 yo = y_other[idx_o]
@@ -254,7 +311,7 @@ def main():
     parser.add_argument('--output_dir', type=str, default='chemistry_cycle_plots_combined', help='Output directory')
     parser.add_argument('--dataset_hint', type=str, default=None, help='Optional dataset name hint to override auto detection')
     parser.add_argument('--ma_window', type=int, default=0, help='Smoothing window (0/1 disables, >1 enables)')
-    parser.add_argument('--smoothing', type=str, default='none', choices=['none', 'ma', 'median'], help='Smoothing method for curves')
+    parser.add_argument('--smoothing', type=str, default='none', choices=['none', 'ma', 'median', 'hms'], help='Smoothing method for curves')
     parser.add_argument('--remove_after_percentile', type=float, default=None, help='Trim points above this percentile after smoothing (e.g., 90)')
     parser.add_argument('--verbose', action='store_true', help='Verbose logging')
     args = parser.parse_args()
