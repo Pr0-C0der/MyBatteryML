@@ -59,6 +59,7 @@ from batteryml.data.battery_data import BatteryData
 from batteryml.label.rul import RULLabelAnnotator
 from batteryml.training.train_rul_baselines import build_train_test_lists
 from batteryml.data_analysis import cycle_features as cf
+from batteryml.chemistry_data_analysis.cycle_features import get_extractor_class as _chem_get_extractor_class
 
 
 def _available_feature_fns() -> Dict[str, callable]:
@@ -108,6 +109,48 @@ def _build_cycle_feature_table(battery: BatteryData, feature_fns: Dict[str, call
     for c in battery.cycle_data:
         row: Dict[str, float] = {'cycle_number': c.cycle_number}
         for name, fn in feature_fns.items():
+            try:
+                val = fn(battery, c)
+                row[name] = float(val) if val is not None and np.isfinite(float(val)) else np.nan
+            except Exception:
+                row[name] = np.nan
+        rows.append(row)
+    return pd.DataFrame(rows)
+
+
+def _infer_dataset_for_battery(dataset_hint: Optional[str], battery: BatteryData) -> Optional[str]:
+    if dataset_hint:
+        return str(dataset_hint).upper()
+    # Try tokens in metadata
+    tokens = ['MATR', 'MATR1', 'MATR2', 'CALCE', 'SNL', 'RWTH', 'HNEI', 'UL_PUR', 'HUST', 'OX']
+    def _txt(x):
+        try:
+            return str(x).upper()
+        except Exception:
+            return ''
+    for source in [battery.cell_id, getattr(battery, 'reference', ''), getattr(battery, 'description', '')]:
+        s = _txt(source)
+        for t in tokens:
+            if t in s:
+                return t
+    return None
+
+
+def _build_cycle_feature_table_extractor(battery: BatteryData, feature_names: List[str], dataset_hint: Optional[str]) -> pd.DataFrame:
+    ds = _infer_dataset_for_battery(dataset_hint, battery)
+    if not ds:
+        return pd.DataFrame()
+    cls = _chem_get_extractor_class(ds)
+    if cls is None:
+        return pd.DataFrame()
+    extractor = cls()
+    rows: List[Dict[str, float]] = []
+    for c in battery.cycle_data:
+        row: Dict[str, float] = {'cycle_number': c.cycle_number}
+        for name in feature_names:
+            fn = getattr(extractor, name, None)
+            if not callable(fn):
+                continue
             try:
                 val = fn(battery, c)
                 row[name] = float(val) if val is not None and np.isfinite(float(val)) else np.nan
@@ -304,7 +347,7 @@ def _report_missing_for_battery(cell_id: str, df: pd.DataFrame, feature_names: L
 
 def _prepare_dataset_windows(files: List[Path], feature_fns: Dict[str, callable], feature_names: List[str], window_size: int,
                              cycle_limit: Optional[int], verbose: bool, report_missing: bool, progress_desc: str,
-                             feature_processing: str, fp_mm_window: int) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+                             feature_processing: str, fp_mm_window: int, dataset_hint: Optional[str] = None) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
     Xs: List[np.ndarray] = []
     ys: List[np.ndarray] = []
     groups: List[str] = []
@@ -314,7 +357,13 @@ def _prepare_dataset_windows(files: List[Path], feature_fns: Dict[str, callable]
         except Exception:
             continue
         total_rul = _compute_total_rul(battery)
-        df = _build_cycle_feature_table(battery, feature_fns)
+        # Prefer chemistry-specific extractor if available
+        try:
+            df = _build_cycle_feature_table_extractor(battery, feature_names, dataset_hint)
+        except Exception:
+            df = pd.DataFrame()
+        if df.empty:
+            df = _build_cycle_feature_table(battery, feature_fns)
         if report_missing:
             _report_missing_for_battery(battery.cell_id, df, feature_names, cycle_limit, verbose=verbose)
         Xw, yw = _make_windows(df, feature_names, total_rul, window_size,
@@ -336,7 +385,7 @@ def _prepare_dataset_windows(files: List[Path], feature_fns: Dict[str, callable]
 
 def _prepare_dataset_battery_level(files: List[Path], feature_fns: Dict[str, callable], feature_names: List[str], cycle_limit: int,
                                    verbose: bool, report_missing: bool, progress_desc: str,
-                                   feature_processing: str, fp_mm_window: int) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+                                   feature_processing: str, fp_mm_window: int, dataset_hint: Optional[str] = None) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
     X_list: List[np.ndarray] = []
     y_list: List[float] = []
     groups: List[str] = []
@@ -346,7 +395,12 @@ def _prepare_dataset_battery_level(files: List[Path], feature_fns: Dict[str, cal
         except Exception:
             continue
         total_rul = _compute_total_rul(battery)
-        df = _build_cycle_feature_table(battery, feature_fns)
+        try:
+            df = _build_cycle_feature_table_extractor(battery, feature_names, dataset_hint)
+        except Exception:
+            df = pd.DataFrame()
+        if df.empty:
+            df = _build_cycle_feature_table(battery, feature_fns)
         if report_missing:
             _report_missing_for_battery(battery.cell_id, df, feature_names, cycle_limit, verbose=verbose)
         vec = _make_battery_vector(df, feature_names, cycle_limit=cycle_limit, verbose=verbose,
@@ -636,20 +690,22 @@ def run(dataset: str, data_path: str, output_dir: str, window_size: int, feature
         X_train, y_train, g_train = _prepare_dataset_battery_level(train_files, feature_fns, feature_names, cycle_limit=int(cycle_limit),
                                                                    verbose=verbose, report_missing=report_missing,
                                                                    progress_desc='Building train battery vectors',
-                                                                   feature_processing=feature_processing, fp_mm_window=fp_mm_window)
+                                                                   feature_processing=feature_processing, fp_mm_window=fp_mm_window,
+                                                                   dataset_hint=dataset)
         X_test, y_test, _ = _prepare_dataset_battery_level(test_files, feature_fns, feature_names, cycle_limit=int(cycle_limit),
                                                            verbose=verbose, report_missing=report_missing,
                                                            progress_desc='Building test battery vectors',
-                                                           feature_processing=feature_processing, fp_mm_window=fp_mm_window)
+                                                           feature_processing=feature_processing, fp_mm_window=fp_mm_window,
+                                                           dataset_hint=dataset)
     else:
         X_train, y_train, g_train = _prepare_dataset_windows(train_files, feature_fns, feature_names, window_size,
                                                              cycle_limit=cycle_limit, verbose=verbose, report_missing=report_missing,
                                                              progress_desc='Building train windows', feature_processing=feature_processing,
-                                                             fp_mm_window=fp_mm_window)
+                                                             fp_mm_window=fp_mm_window, dataset_hint=dataset)
         X_test, y_test, _ = _prepare_dataset_windows(test_files, feature_fns, feature_names, window_size,
                                                      cycle_limit=cycle_limit, verbose=verbose, report_missing=report_missing,
                                                      progress_desc='Building test windows', feature_processing=feature_processing,
-                                                     fp_mm_window=fp_mm_window)
+                                                     fp_mm_window=fp_mm_window, dataset_hint=dataset)
 
     if X_train.size == 0 or X_test.size == 0:
         print("No data available after windowing. Aborting.")
