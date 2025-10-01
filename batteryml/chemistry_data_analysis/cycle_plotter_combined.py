@@ -41,6 +41,11 @@ class ChemistryCombinedPlotter:
             CombinedSpec('energy_during_charge_cycle', 'power_during_charge_cycle', 'Energy during Charge (W·s)'),
             CombinedSpec('avg_charge_c_rate', 'avg_charge_c_rate', 'Avg C-rate (charge)'),
             CombinedSpec('max_charge_c_rate', 'max_charge_c_rate', 'Max C-rate (charge)'),
+            # Additional requested combined features
+            CombinedSpec('energy_during_discharge_cycle', 'power_during_discharge_cycle', 'Energy during Discharge (W·s)'),
+            CombinedSpec('discharge_cycle_length', 'discharge_cycle_length', 'Discharge Cycle Length (s)'),
+            CombinedSpec('cycle_length', 'cycle_length', 'Complete Cycle Length (s)'),
+            CombinedSpec('charge_to_discharge_time_ratio', 'charge_to_discharge_time_ratio', 'Charge/Discharge Time Ratio'),
         ]
 
     @staticmethod
