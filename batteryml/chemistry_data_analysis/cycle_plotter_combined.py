@@ -228,6 +228,11 @@ class ChemistryCombinedPlotter:
         if base is None:
             return
         x_base, y_base = base
+        
+        # Calculate log and square transformations of max_discharge_capacity
+        y_base_log = np.log(np.maximum(y_base, 1e-10))  # Avoid log(0) or negative values
+        y_base_square = y_base ** 2
+        
         for spec in self.specs:
             other = self._collect_series(b, extractor, spec.method_name)
             if other is None:
@@ -242,15 +247,23 @@ class ChemistryCombinedPlotter:
             xb = x_base[idx_b]
             if self.ma_window and self.smoothing == 'ma':
                 yb = self._moving_average(y_base[idx_b], self.ma_window)
+                yb_log = self._moving_average(y_base_log[idx_b], self.ma_window)
+                yb_square = self._moving_average(y_base_square[idx_b], self.ma_window)
                 yo = self._moving_average(y_other[idx_o], self.ma_window)
             elif self.ma_window and self.smoothing == 'median':
                 yb = self._moving_median(y_base[idx_b], self.ma_window)
+                yb_log = self._moving_median(y_base_log[idx_b], self.ma_window)
+                yb_square = self._moving_median(y_base_square[idx_b], self.ma_window)
                 yo = self._moving_median(y_other[idx_o], self.ma_window)
             elif self.smoothing == 'hms':
                 yb = self._hms_filter(y_base[idx_b])
+                yb_log = self._hms_filter(y_base_log[idx_b])
+                yb_square = self._hms_filter(y_base_square[idx_b])
                 yo = self._hms_filter(y_other[idx_o])
             else:
                 yb = y_base[idx_b]
+                yb_log = y_base_log[idx_b]
+                yb_square = y_base_square[idx_b]
                 yo = y_other[idx_o]
 
             # Remove points beyond percentile (outlier trimming) after smoothing
@@ -272,18 +285,36 @@ class ChemistryCombinedPlotter:
                     xb = xb[mask]
                     yo = yo[mask]
                     yb = yb[mask]
+                    yb_log = yb_log[mask]
+                    yb_square = yb_square[mask]
 
-            fig, ax1 = plt.subplots(figsize=(10, 6))
+            # Create subplot with 3 y-axes for the different transformations
+            fig, ax1 = plt.subplots(figsize=(12, 8))
             ax1.plot(xb, yo, color='blue', linewidth=1.6, alpha=0.9, label=spec.ylabel)
             ax1.set_xlabel('Cycle Number')
             ax1.set_ylabel(spec.ylabel, color='blue')
             ax1.tick_params(axis='y', labelcolor='blue')
             ax1.grid(True, alpha=0.3)
 
+            # Second y-axis for max discharge capacity
             ax2 = ax1.twinx()
             ax2.plot(xb, yb, color='red', linewidth=1.6, alpha=0.9, label='Max Discharge Capacity (Ah)')
             ax2.set_ylabel('Max Discharge Capacity (Ah)', color='red')
             ax2.tick_params(axis='y', labelcolor='red')
+
+            # Third y-axis for log(max discharge capacity)
+            ax3 = ax1.twinx()
+            ax3.spines['right'].set_position(('outward', 60))
+            ax3.plot(xb, yb_log, color='green', linewidth=1.6, alpha=0.9, label='Log(Max Discharge Capacity)')
+            ax3.set_ylabel('Log(Max Discharge Capacity)', color='green')
+            ax3.tick_params(axis='y', labelcolor='green')
+
+            # Fourth y-axis for square(max discharge capacity)
+            ax4 = ax1.twinx()
+            ax4.spines['right'].set_position(('outward', 120))
+            ax4.plot(xb, yb_square, color='orange', linewidth=1.6, alpha=0.9, label='Square(Max Discharge Capacity)')
+            ax4.set_ylabel('Square(Max Discharge Capacity)', color='orange')
+            ax4.tick_params(axis='y', labelcolor='orange')
 
             # Hardcoded vertical cycle markers
             for xv in [100, 200, 500]:
@@ -292,7 +323,7 @@ class ChemistryCombinedPlotter:
                 except Exception:
                     pass
 
-            fig.suptitle(f'{spec.feature_name.replace("_", " ").title()} vs Max Discharge Capacity — {b.cell_id}')
+            fig.suptitle(f'{spec.feature_name.replace("_", " ").title()} vs Max Discharge Capacity (Linear, Log, Square) — {b.cell_id}')
 
             out_dir = self.output_dir / self.chem_name / 'feature_vs_cycle_graphs_combined' / spec.feature_name
             out_dir.mkdir(parents=True, exist_ok=True)
