@@ -10,6 +10,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, List, Optional, Dict
 from scipy.signal import medfilt, savgol_filter
+from tqdm import tqdm
 
 from batteryml.data.battery_data import BatteryData
 from batteryml.label.rul import RULLabelAnnotator
@@ -31,7 +32,7 @@ class CycleScalarFeature:
 class ChemistryCorrelationAnalyzer:
     """Correlation analyzer using chemistry-aware cycle feature extractors."""
 
-    def __init__(self, data_path: str, output_dir: str = 'chemistry_correlation_analysis_mod', verbose: bool = False, dataset_hint: Optional[str] = None, cycle_limit: Optional[int] = None, smoothing: str = 'none', ma_window: int = 5):
+    def __init__(self, data_path: str, output_dir: str = 'chemistry_correlation_analysis_mod', verbose: bool = False, dataset_hint: Optional[str] = None, cycle_limit: Optional[int] = None, smoothing: str = 'none', ma_window: int = 5, boxplot_only: bool = False):
         self.data_path = Path(data_path)
         self.output_dir = Path(output_dir)
         self.verbose = bool(verbose)
@@ -39,6 +40,7 @@ class ChemistryCorrelationAnalyzer:
         self.cycle_limit = cycle_limit
         self.smoothing = str(smoothing or 'none').lower()
         self.ma_window = int(ma_window) if int(ma_window) > 1 else 5
+        self.boxplot_only = bool(boxplot_only)
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
         # subdirs
@@ -333,9 +335,12 @@ class ChemistryCorrelationAnalyzer:
     def analyze_battery(self, src: Path, battery: BatteryData):
         extractor = self._get_extractor(src, battery)
         df = self.build_cycle_feature_matrix(src, battery, extractor)
-        self._save_matrix(battery, df)
-        self.plot_correlation_heatmap(battery, df)
-        self.plot_rul_barh(battery, df)
+        
+        if not self.boxplot_only:
+            self._save_matrix(battery, df)
+            self.plot_correlation_heatmap(battery, df)
+            self.plot_rul_barh(battery, df)
+        
         if self.verbose:
             print(f"[ok] analyzed {battery.cell_id} -> features: {list(self.features.keys())}")
 
@@ -343,7 +348,9 @@ class ChemistryCorrelationAnalyzer:
         files = self._battery_files()
         if self.verbose:
             print(f"Found {len(files)} battery files under {self.data_path}")
-        for f in files:
+        
+        # Process each battery with progress bar
+        for f in tqdm(files, desc="Processing batteries", unit="battery"):
             try:
                 b = BatteryData.load(f)
             except Exception as e:
@@ -352,16 +359,19 @@ class ChemistryCorrelationAnalyzer:
                 continue
             self.analyze_battery(f, b)
 
-        # After per-battery analysis, generate feature-vs-battery correlation plots
-        for feature in self.features.keys():
-            try:
-                self.plot_feature_rul_correlation_across_batteries(feature)
-            except Exception as e:
-                if self.verbose:
-                    print(f"[warn] failed feature_vs_batteries for {feature}: {e}")
+        if not self.boxplot_only:
+            # After per-battery analysis, generate feature-vs-battery correlation plots
+            for feature in tqdm(self.features.keys(), desc="Generating feature-vs-battery plots", unit="feature"):
+                try:
+                    self.plot_feature_rul_correlation_across_batteries(feature)
+                except Exception as e:
+                    if self.verbose:
+                        print(f"[warn] failed feature_vs_batteries for {feature}: {e}")
 
         # Boxplot across features (correlation with RUL distributions)
         try:
+            if self.verbose:
+                print("Generating feature correlation boxplot...")
             self.plot_feature_rul_correlation_boxplot()
         except Exception as e:
             if self.verbose:
@@ -502,8 +512,8 @@ def register_default_features(analyzer: ChemistryCorrelationAnalyzer):
         analyzer.register_feature(spec)
 
 
-def build_default_analyzer(data_path: str, output_dir: str = 'chemistry_correlation_analysis_mod', verbose: bool = False, dataset_hint: Optional[str] = None, cycle_limit: Optional[int] = None, smoothing: str = 'none', ma_window: int = 5) -> ChemistryCorrelationAnalyzer:
-    analyzer = ChemistryCorrelationAnalyzer(data_path, output_dir, verbose=verbose, dataset_hint=dataset_hint, cycle_limit=cycle_limit, smoothing=smoothing, ma_window=ma_window)
+def build_default_analyzer(data_path: str, output_dir: str = 'chemistry_correlation_analysis_mod', verbose: bool = False, dataset_hint: Optional[str] = None, cycle_limit: Optional[int] = None, smoothing: str = 'none', ma_window: int = 5, boxplot_only: bool = False) -> ChemistryCorrelationAnalyzer:
+    analyzer = ChemistryCorrelationAnalyzer(data_path, output_dir, verbose=verbose, dataset_hint=dataset_hint, cycle_limit=cycle_limit, smoothing=smoothing, ma_window=ma_window, boxplot_only=boxplot_only)
     register_default_features(analyzer)
     return analyzer
 
@@ -517,10 +527,11 @@ def main():
     parser.add_argument('--cycle_limit', type=int, default=None, help='Limit analysis to first N cycles (None for all cycles)')
     parser.add_argument('--smoothing', type=str, default='none', choices=['none', 'ma', 'median', 'hms'], help='Smoothing method for feature data')
     parser.add_argument('--ma_window', type=int, default=5, help='Window size for moving average/median smoothing')
+    parser.add_argument('--boxplot_only', action='store_true', help='Only generate feature correlation boxplot (skip individual battery analysis)')
     parser.add_argument('--verbose', action='store_true', help='Enable verbose logging')
     args = parser.parse_args()
 
-    analyzer = build_default_analyzer(args.data_path, args.output_dir, verbose=args.verbose, dataset_hint=args.dataset_hint, cycle_limit=args.cycle_limit, smoothing=args.smoothing, ma_window=args.ma_window)
+    analyzer = build_default_analyzer(args.data_path, args.output_dir, verbose=args.verbose, dataset_hint=args.dataset_hint, cycle_limit=args.cycle_limit, smoothing=args.smoothing, ma_window=args.ma_window, boxplot_only=args.boxplot_only)
     analyzer.analyze_dataset()
 
 
