@@ -9,6 +9,7 @@ import seaborn as sns
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, List, Optional, Dict
+from scipy.signal import medfilt, savgol_filter
 
 from batteryml.data.battery_data import BatteryData
 from batteryml.label.rul import RULLabelAnnotator
@@ -30,11 +31,14 @@ class CycleScalarFeature:
 class ChemistryCorrelationAnalyzer:
     """Correlation analyzer using chemistry-aware cycle feature extractors."""
 
-    def __init__(self, data_path: str, output_dir: str = 'chemistry_correlation_analysis_mod', verbose: bool = False, dataset_hint: Optional[str] = None):
+    def __init__(self, data_path: str, output_dir: str = 'chemistry_correlation_analysis_mod', verbose: bool = False, dataset_hint: Optional[str] = None, cycle_limit: Optional[int] = None, smoothing: str = 'none', ma_window: int = 5):
         self.data_path = Path(data_path)
         self.output_dir = Path(output_dir)
         self.verbose = bool(verbose)
         self.dataset_hint = dataset_hint
+        self.cycle_limit = cycle_limit
+        self.smoothing = str(smoothing or 'none').lower()
+        self.ma_window = int(ma_window) if int(ma_window) > 1 else 5
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
         # subdirs
@@ -61,6 +65,97 @@ class ChemistryCorrelationAnalyzer:
         s = s.strip().replace(' ', '_')
         s = ''.join(ch for ch in s if ch.isprintable())
         return s or 'unknown'
+
+    @staticmethod
+    def _moving_average(y: np.ndarray, window: int) -> np.ndarray:
+        try:
+            arr = np.asarray(y, dtype=float)
+            if window is None or int(window) <= 1 or arr.size == 0:
+                return arr
+            w = int(window)
+            kernel = np.ones(w, dtype=float)
+            mask = np.isfinite(arr).astype(float)
+            arr0 = np.nan_to_num(arr, nan=0.0)
+            num = np.convolve(arr0, kernel, mode='same')
+            den = np.convolve(mask, kernel, mode='same')
+            out = num / np.maximum(den, 1e-8)
+            out[den < 1e-8] = np.nan
+            return out
+        except Exception:
+            return y
+
+    @staticmethod
+    def _moving_median(y: np.ndarray, window: int) -> np.ndarray:
+        try:
+            arr = np.asarray(y, dtype=float)
+            if window is None or int(window) <= 1 or arr.size == 0:
+                return arr
+            w = int(window)
+            if w < 1:
+                return arr
+            pad = w // 2
+            padded = np.pad(arr, (pad, pad), mode='edge')
+            out = np.empty_like(arr)
+            for i in range(arr.size):
+                seg = padded[i:i + w]
+                m = np.isfinite(seg)
+                out[i] = np.nanmedian(seg[m]) if np.any(m) else np.nan
+            return out
+        except Exception:
+            return y
+
+    @staticmethod
+    def _hampel_filter(y: np.ndarray, window_size: int = 11, n_sigmas: float = 3.0) -> np.ndarray:
+        arr = np.asarray(y, dtype=float)
+        n = arr.size
+        if n == 0 or window_size < 3:
+            return arr
+        w = int(window_size)
+        half = w // 2
+        out = arr.copy()
+        for i in range(n):
+            l = max(0, i - half)
+            r = min(n, i + half + 1)
+            seg = arr[l:r]
+            m = np.isfinite(seg)
+            if not np.any(m):
+                continue
+            med = float(np.nanmedian(seg[m]))
+            mad = float(np.nanmedian(np.abs(seg[m] - med)))
+            if mad <= 0:
+                continue
+            thr = n_sigmas * 1.4826 * mad
+            if np.isfinite(arr[i]) and abs(arr[i] - med) > thr:
+                out[i] = med
+        return out
+
+    @staticmethod
+    def _hms_filter(y: np.ndarray) -> np.ndarray:
+        try:
+            arr = np.asarray(y, dtype=float)
+            if arr.size == 0:
+                return arr
+            # 1) Hampel
+            h = ChemistryCorrelationAnalyzer._hampel_filter(arr, window_size=11, n_sigmas=3.0)
+            # 2) Median filter (size=5)
+            try:
+                m = medfilt(h, kernel_size=5)
+            except Exception:
+                m = h
+            # 3) Savitzky–Golay (window_length=101, polyorder=3), adjusted to length
+            wl = 101
+            if m.size < wl:
+                wl = m.size if m.size % 2 == 1 else max(1, m.size - 1)
+            if wl >= 5 and wl > 3:
+                try:
+                    s = savgol_filter(m, window_length=wl, polyorder=3, mode='interp')
+                except Exception:
+                    s = m
+            else:
+                s = m
+            return s
+        except Exception:
+            return y
 
     # -------------
     # Dataset logic
@@ -133,7 +228,13 @@ class ChemistryCorrelationAnalyzer:
     def build_cycle_feature_matrix(self, src: Path, battery: BatteryData, extractor: Optional[DatasetSpecificCycleFeatures]) -> pd.DataFrame:
         data: List[Dict[str, float]] = []
         total_rul = self._compute_total_rul(battery)
-        for idx, c in enumerate(battery.cycle_data):
+        
+        # Apply cycle limit if specified
+        cycles_to_process = battery.cycle_data
+        if self.cycle_limit is not None and self.cycle_limit > 0:
+            cycles_to_process = cycles_to_process[:self.cycle_limit]
+        
+        for idx, c in enumerate(cycles_to_process):
             row: Dict[str, float] = {
                 'cycle_number': c.cycle_number,
                 'rul': max(0, total_rul - idx)
@@ -151,7 +252,26 @@ class ChemistryCorrelationAnalyzer:
                     except Exception:
                         row[name] = np.nan
             data.append(row)
-        return pd.DataFrame(data)
+        
+        df = pd.DataFrame(data)
+        
+        # Apply smoothing to feature columns (not cycle_number or rul)
+        if self.smoothing != 'none' and len(df) > 1:
+            feature_cols = [col for col in df.columns if col not in ['cycle_number', 'rul']]
+            for col in feature_cols:
+                if col in df.columns and df[col].dtype in [np.float64, np.float32, np.int64, np.int32]:
+                    series = df[col].values
+                    if self.smoothing == 'ma':
+                        smoothed = self._moving_average(series, self.ma_window)
+                    elif self.smoothing == 'median':
+                        smoothed = self._moving_median(series, self.ma_window)
+                    elif self.smoothing == 'hms':
+                        smoothed = self._hms_filter(series)
+                    else:
+                        smoothed = series
+                    df[col] = smoothed
+        
+        return df
 
     def _save_matrix(self, battery: BatteryData, df: pd.DataFrame):
         safe_id = battery.cell_id.replace('/', '_').replace('\\', '_')
@@ -382,8 +502,8 @@ def register_default_features(analyzer: ChemistryCorrelationAnalyzer):
         analyzer.register_feature(spec)
 
 
-def build_default_analyzer(data_path: str, output_dir: str = 'chemistry_correlation_analysis_mod', verbose: bool = False, dataset_hint: Optional[str] = None) -> ChemistryCorrelationAnalyzer:
-    analyzer = ChemistryCorrelationAnalyzer(data_path, output_dir, verbose=verbose, dataset_hint=dataset_hint)
+def build_default_analyzer(data_path: str, output_dir: str = 'chemistry_correlation_analysis_mod', verbose: bool = False, dataset_hint: Optional[str] = None, cycle_limit: Optional[int] = None, smoothing: str = 'none', ma_window: int = 5) -> ChemistryCorrelationAnalyzer:
+    analyzer = ChemistryCorrelationAnalyzer(data_path, output_dir, verbose=verbose, dataset_hint=dataset_hint, cycle_limit=cycle_limit, smoothing=smoothing, ma_window=ma_window)
     register_default_features(analyzer)
     return analyzer
 
@@ -394,10 +514,13 @@ def main():
     parser.add_argument('--data_path', type=str, required=True, help='Path to directory containing *.pkl (e.g., a chemistry subfolder)')
     parser.add_argument('--output_dir', type=str, default='chemistry_correlation_analysis_mod', help='Output directory for correlation outputs')
     parser.add_argument('--dataset_hint', type=str, default=None, help='Optional dataset name hint to override auto detection')
+    parser.add_argument('--cycle_limit', type=int, default=None, help='Limit analysis to first N cycles (None for all cycles)')
+    parser.add_argument('--smoothing', type=str, default='none', choices=['none', 'ma', 'median', 'hms'], help='Smoothing method for feature data')
+    parser.add_argument('--ma_window', type=int, default=5, help='Window size for moving average/median smoothing')
     parser.add_argument('--verbose', action='store_true', help='Enable verbose logging')
     args = parser.parse_args()
 
-    analyzer = build_default_analyzer(args.data_path, args.output_dir, verbose=args.verbose, dataset_hint=args.dataset_hint)
+    analyzer = build_default_analyzer(args.data_path, args.output_dir, verbose=args.verbose, dataset_hint=args.dataset_hint, cycle_limit=args.cycle_limit, smoothing=args.smoothing, ma_window=args.ma_window)
     analyzer.analyze_dataset()
 
 
