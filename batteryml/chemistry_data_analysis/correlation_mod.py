@@ -349,6 +349,9 @@ class ChemistryCorrelationAnalyzer:
         if self.verbose:
             print(f"Found {len(files)} battery files under {self.data_path}")
         
+        # Store data for boxplot if boxplot_only mode
+        all_battery_data = [] if self.boxplot_only else None
+        
         # Process each battery with progress bar
         for f in tqdm(files, desc="Processing batteries", unit="battery"):
             try:
@@ -357,7 +360,14 @@ class ChemistryCorrelationAnalyzer:
                 if self.verbose:
                     print(f"[warn] load failed: {f} ({e})")
                 continue
-            self.analyze_battery(f, b)
+            
+            if self.boxplot_only:
+                # Store data for boxplot generation
+                extractor = self._get_extractor(f, b)
+                df = self.build_cycle_feature_matrix(f, b, extractor)
+                all_battery_data.append((b.cell_id, df))
+            else:
+                self.analyze_battery(f, b)
 
         if not self.boxplot_only:
             # After per-battery analysis, generate feature-vs-battery correlation plots
@@ -372,7 +382,10 @@ class ChemistryCorrelationAnalyzer:
         try:
             if self.verbose:
                 print("Generating feature correlation boxplot...")
-            self.plot_feature_rul_correlation_boxplot()
+            if self.boxplot_only and all_battery_data:
+                self.plot_feature_rul_correlation_boxplot_from_data(all_battery_data)
+            else:
+                self.plot_feature_rul_correlation_boxplot()
         except Exception as e:
             if self.verbose:
                 print(f"[warn] failed feature boxplot: {e}")
@@ -460,7 +473,45 @@ class ChemistryCorrelationAnalyzer:
             finally:
                 plt.close()
 
+    def plot_feature_rul_correlation_boxplot_from_data(self, all_battery_data: List[tuple]):
+        """Generate boxplot from in-memory data (for boxplot_only mode)"""
+        rows = []
+        for feature in self.features.keys():
+            for cell_id, df in all_battery_data:
+                val = self._compute_feature_rul_corr(df, feature)
+                if val is not None and np.isfinite(val):
+                    rows.append({'feature': feature, 'corr': float(val)})
+        
+        if not rows:
+            if self.verbose:
+                print("[warn] No correlation data found for boxplot")
+            return
+            
+        df = pd.DataFrame(rows)
+        num_feats = df['feature'].nunique()
+        fig_w = max(12, min(1.0 * num_feats, 36))
+        plt.figure(figsize=(max(12, min(1.0 * num_feats, 36)), 6))
+        sns.boxplot(data=df, x='feature', y='corr')
+        plt.axhline(0.0, color='0.5', linewidth=1)
+        plt.ylabel('Correlation with RUL')
+        plt.xlabel('Feature')
+        plt.title('Feature–RUL Correlation Distributions Across Batteries')
+        plt.xticks(rotation=45, ha='right')
+        out_path = self.feature_box_dir / 'feature_rul_correlation_boxplot.png'
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            plt.tight_layout()
+            plt.savefig(out_path, dpi=300, bbox_inches='tight')
+            if self.verbose:
+                print(f"[ok] Boxplot saved to {out_path}")
+        except Exception as e:
+            if self.verbose:
+                print(f"[warn] Failed to save boxplot: {e}")
+        finally:
+            plt.close()
+
     def plot_feature_rul_correlation_boxplot(self):
+        """Generate boxplot from saved CSV files (for normal mode)"""
         rows = []
         for feature in self.features.keys():
             _, corrs = self._collect_feature_corrs(feature)
@@ -468,6 +519,8 @@ class ChemistryCorrelationAnalyzer:
                 if np.isfinite(v):
                     rows.append({'feature': feature, 'corr': float(v)})
         if not rows:
+            if self.verbose:
+                print("[warn] No correlation data found for boxplot")
             return
         df = pd.DataFrame(rows)
         num_feats = df['feature'].nunique()
@@ -484,8 +537,11 @@ class ChemistryCorrelationAnalyzer:
         try:
             plt.tight_layout()
             plt.savefig(out_path, dpi=300, bbox_inches='tight')
-        except Exception:
-            pass
+            if self.verbose:
+                print(f"[ok] Boxplot saved to {out_path}")
+        except Exception as e:
+            if self.verbose:
+                print(f"[warn] Failed to save boxplot: {e}")
         finally:
             plt.close()
 
