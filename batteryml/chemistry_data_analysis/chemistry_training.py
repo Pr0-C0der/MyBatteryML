@@ -58,6 +58,9 @@ class ChemistryTrainer:
         # Chemistry name from data path
         self.chemistry_name = self.data_path.name
         
+        # Initialize RMSE tracking
+        self.rmse_file = self.output_dir / "RMSE.csv"
+        
         # Create output subdirectories
         self.battery_level_dir = self.output_dir / self.chemistry_name / 'battery_level'
         self.cycle_level_dir = self.output_dir / self.chemistry_name / 'cycle_level'
@@ -239,6 +242,29 @@ class ChemistryTrainer:
         except Exception:
             return y
 
+    def _save_rmse_results(self, results: Dict[str, float], model_type: str, features: List[str], 
+                          window_size: int = None, tune: bool = False, cv_splits: int = 5):
+        """Save RMSE results to CSV file with simple format: rows=models, columns=datasets."""
+        import pandas as pd
+        
+        # Round RMSE values to 2 decimal places
+        rounded_results = {k: round(v, 2) for k, v in results.items()}
+        
+        # Create DataFrame with chemistry as column
+        df = pd.DataFrame({self.chemistry_name: rounded_results})
+        
+        # Append to existing CSV or create new one
+        if self.rmse_file.exists():
+            existing_df = pd.read_csv(self.rmse_file, index_col=0)
+            # Merge with existing data, keeping all models and datasets
+            combined_df = existing_df.join(df, how='outer')
+            combined_df.to_csv(self.rmse_file)
+        else:
+            df.to_csv(self.rmse_file)
+        
+        if self.verbose:
+            print(f"RMSE results saved to {self.rmse_file}")
+
     def _create_chemistry_train_test_split(self, seed: int = 42) -> Tuple[List[Path], List[Path]]:
         """Create chemistry-level train/test split: specified ratio of cells from each dataset for training, remainder for testing."""
         files = self._battery_files()
@@ -332,6 +358,7 @@ class ChemistryTrainer:
         
         if self.verbose:
             print(f"Battery-level training data: {X_train.shape}, Features: {len(feature_names)}")
+            print(f"Features used: {feature_names}")
         
         # Apply label transformation
         y_train_t, train_label_stats = _fit_label_transform(y_train)
@@ -483,15 +510,15 @@ class ChemistryTrainer:
                 else:
                     results[name] = 0.0  # No test set available
                 
-                # Save model
-                model_path = self.battery_level_dir / f"{self.chemistry_name}_{name}_battery_level_model.pkl"
-                import joblib
-                joblib.dump(est, model_path)
+                # Note: Model saving removed as requested
                 
             except Exception as e:
                 if self.verbose:
                     print(f"Error training {name}: {e}")
                 results[name] = np.inf
+        
+        # Save RMSE results to CSV
+        self._save_rmse_results(results, "battery_level", feature_names, tune=tune, cv_splits=cv_splits)
         
         return results
 
@@ -526,6 +553,7 @@ class ChemistryTrainer:
         
         if self.verbose:
             print(f"Cycle-level training data: {X_train.shape}, Features: {len(feature_names)} × window {window_size}")
+            print(f"Features used: {feature_names}")
         
         # Apply label transformation
         y_train_t, train_label_stats = _fit_label_transform(y_train)
@@ -677,15 +705,15 @@ class ChemistryTrainer:
                 else:
                     results[name] = 0.0  # No test set available
                 
-                # Save model
-                model_path = self.cycle_level_dir / f"{self.chemistry_name}_{name}_cycle_level_model.pkl"
-                import joblib
-                joblib.dump(est, model_path)
+                # Note: Model saving removed as requested
                 
             except Exception as e:
                 if self.verbose:
                     print(f"Error training {name}: {e}")
                 results[name] = np.inf
+        
+        # Save RMSE results to CSV
+        self._save_rmse_results(results, "cycle_level", feature_names, window_size, tune, cv_splits)
         
         return results
 
