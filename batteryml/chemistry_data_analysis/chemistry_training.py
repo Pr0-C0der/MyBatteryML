@@ -43,7 +43,7 @@ class ChemistryTrainer:
     def __init__(self, data_path: str, output_dir: str = 'chemistry_training_results', 
                  verbose: bool = False, dataset_hint: Optional[str] = None, 
                  cycle_limit: Optional[int] = None, smoothing: str = 'none', 
-                 ma_window: int = 5, use_gpu: bool = False):
+                 ma_window: int = 5, use_gpu: bool = False, train_test_ratio: float = 0.7):
         self.data_path = Path(data_path)
         self.output_dir = Path(output_dir)
         self.verbose = bool(verbose)
@@ -52,6 +52,7 @@ class ChemistryTrainer:
         self.smoothing = str(smoothing or 'none').lower()
         self.ma_window = int(ma_window) if int(ma_window) > 1 else 5
         self.use_gpu = bool(use_gpu)
+        self.train_test_ratio = float(train_test_ratio)
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
         # Chemistry name from data path
@@ -238,8 +239,8 @@ class ChemistryTrainer:
         except Exception:
             return y
 
-    def _create_chemistry_train_test_split(self, train_test_ratio: float = 0.7, seed: int = 42) -> Tuple[List[Path], List[Path]]:
-        """Create chemistry-level train/test split: 70% of cells from each dataset for training, 30% for testing."""
+    def _create_chemistry_train_test_split(self, seed: int = 42) -> Tuple[List[Path], List[Path]]:
+        """Create chemistry-level train/test split: specified ratio of cells from each dataset for training, remainder for testing."""
         files = self._battery_files()
         if len(files) < 2:
             if self.verbose:
@@ -286,7 +287,7 @@ class ChemistryTrainer:
             np.random.shuffle(files_shuffled)
             
             # Calculate split point
-            split_idx = int(train_test_ratio * len(files_shuffled))
+            split_idx = int(self.train_test_ratio * len(files_shuffled))
             
             # Split
             train_files.extend(files_shuffled[:split_idx])
@@ -313,8 +314,8 @@ class ChemistryTrainer:
         else:
             feature_names = [f for f in features if f in feature_fns]
         
-        # Create chemistry-level train/test split (70/30 per dataset within chemistry)
-        train_files, test_files = self._create_chemistry_train_test_split(train_test_ratio=0.7)
+        # Create chemistry-level train/test split (per dataset within chemistry)
+        train_files, test_files = self._create_chemistry_train_test_split()
         
         if not train_files:
             if self.verbose:
@@ -507,8 +508,8 @@ class ChemistryTrainer:
         else:
             feature_names = [f for f in features if f in feature_fns]
         
-        # Create chemistry-level train/test split (70/30 per dataset within chemistry)
-        train_files, test_files = self._create_chemistry_train_test_split(train_test_ratio=0.7)
+        # Create chemistry-level train/test split (per dataset within chemistry)
+        train_files, test_files = self._create_chemistry_train_test_split()
         
         if not train_files:
             if self.verbose:
@@ -834,6 +835,7 @@ def main():
     parser.add_argument('--use_gpu', action='store_true', help='Use GPU acceleration')
     parser.add_argument('--tune', action='store_true', help='Enable hyperparameter tuning')
     parser.add_argument('--cv_splits', type=int, default=5, help='Number of cross-validation splits')
+    parser.add_argument('--train_test_ratio', type=float, default=0.7, help='Train/test split ratio (default: 0.7)')
     parser.add_argument('--verbose', action='store_true', help='Verbose logging')
     args = parser.parse_args()
 
@@ -845,7 +847,8 @@ def main():
         cycle_limit=args.cycle_limit,
         smoothing=args.smoothing,
         ma_window=args.ma_window,
-        use_gpu=args.use_gpu
+        use_gpu=args.use_gpu,
+        train_test_ratio=args.train_test_ratio
     )
 
     if args.battery_level_only:
