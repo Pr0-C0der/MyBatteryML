@@ -16,7 +16,12 @@ def main():
     chemistry_dirs = [
         str(base_path / "HNEI"),    # Mixed NMC-LCO chemistry
         str(base_path / "SNL"),     # Multiple chemistries (LFP, NCA, NMC)
-        str(base_path / "UL_PUR")   # NCA chemistry
+        str(base_path / "UL_PUR"),  # NCA chemistry
+        str(base_path / "MATR"),    # MATR dataset
+        str(base_path / "CALCE"),   # CALCE dataset
+        str(base_path / "HUST"),    # HUST dataset
+        str(base_path / "RWTH"),    # RWTH dataset
+        str(base_path / "OX")       # OX dataset
     ]
     
     # Check which directories exist

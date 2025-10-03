@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import List, Dict, Optional, Tuple
 import pandas as pd
 from tqdm import tqdm
+from scipy import stats
 
 from batteryml.data.battery_data import BatteryData
 from batteryml.label.rul import RULLabelAnnotator
@@ -160,17 +161,29 @@ class RULDistributionAnalyzer:
         csv_path = self.distributions_dir / f"{self.chemistry_name}_rul_data.csv"
         df.to_csv(csv_path, index=False)
         
+        # Plot distribution curve
+        self.plot_distribution(rul_values, self.chemistry_name)
+        
         return stats
 
     def plot_distribution(self, rul_values: List[float], chemistry_name: str) -> None:
-        """Plot RUL distribution for a single chemistry."""
+        """Plot RUL distribution curve for a single chemistry."""
         if not rul_values:
             return
         
         plt.figure(figsize=(10, 6))
         
-        # Create histogram
-        plt.hist(rul_values, bins=30, alpha=0.7, edgecolor='black', linewidth=0.5)
+        # Create density curve using KDE
+        rul_array = np.array(rul_values)
+        
+        # Create KDE
+        kde = stats.gaussian_kde(rul_array)
+        x_range = np.linspace(rul_array.min(), rul_array.max(), 200)
+        density = kde(x_range)
+        
+        # Plot the curve
+        plt.plot(x_range, density, linewidth=2, alpha=0.8, label=f'{chemistry_name} Distribution')
+        plt.fill_between(x_range, density, alpha=0.3)
         
         # Add statistics
         mean_val = np.mean(rul_values)
@@ -181,8 +194,8 @@ class RULDistributionAnalyzer:
         plt.axvline(median_val, color='green', linestyle='--', linewidth=2, label=f'Median: {median_val:.1f}')
         
         plt.xlabel('RUL (cycles)')
-        plt.ylabel('Frequency')
-        plt.title(f'RUL Distribution - {chemistry_name}\n(n={len(rul_values)}, μ={mean_val:.1f}, σ={std_val:.1f})')
+        plt.ylabel('Density')
+        plt.title(f'RUL Distribution Curve - {chemistry_name}\n(n={len(rul_values)}, μ={mean_val:.1f}, σ={std_val:.1f})')
         plt.legend()
         plt.grid(True, alpha=0.3)
         
@@ -223,47 +236,65 @@ def analyze_all_chemistries(chemistry_dirs: List[str], output_dir: str = 'chemis
 
 
 def plot_combined_distributions(all_rul_data: Dict[str, List[float]], output_dir: str, verbose: bool = False) -> None:
-    """Create a combined plot showing RUL distributions for all chemistries."""
+    """Create a combined plot showing RUL distribution curves for all chemistries."""
     output_path = Path(output_dir)
     output_path.mkdir(parents=True, exist_ok=True)
     
     # Set up the plot
-    plt.figure(figsize=(15, 10))
+    plt.figure(figsize=(14, 8))
     
-    # Create subplots
-    n_chemistries = len(all_rul_data)
-    n_cols = 3
-    n_rows = (n_chemistries + n_cols - 1) // n_cols
+    # Define colors for different datasets
+    colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', 
+              '#8c564b', '#e377c2', '#7f7f7f', '#bcbd22', '#17becf']
     
-    # Individual distributions
+    # Create KDE curves for each chemistry
+    # Calculate global min/max for consistent x-axis
+    all_values = []
+    for rul_values in all_rul_data.values():
+        all_values.extend(rul_values)
+    x_min, x_max = min(all_values), max(all_values)
+    x_range = np.linspace(x_min, x_max, 300)
+    
+    # Plot curves for each chemistry
     for i, (chemistry, rul_values) in enumerate(all_rul_data.items()):
-        plt.subplot(n_rows, n_cols, i + 1)
+        rul_array = np.array(rul_values)
         
-        # Create histogram
-        plt.hist(rul_values, bins=20, alpha=0.7, edgecolor='black', linewidth=0.5)
+        # Create KDE
+        kde = stats.gaussian_kde(rul_array)
+        density = kde(x_range)
         
-        # Add statistics
+        # Normalize density to make curves comparable
+        density = density / np.max(density)
+        
+        # Plot the curve
+        color = colors[i % len(colors)]
+        plt.plot(x_range, density, linewidth=2.5, alpha=0.8, 
+                label=f'{chemistry}', color=color)
+        plt.fill_between(x_range, density, alpha=0.2, color=color)
+    
+    # Add statistics text box
+    stats_text = []
+    for chemistry, rul_values in all_rul_data.items():
         mean_val = np.mean(rul_values)
-        median_val = np.median(rul_values)
-        
-        plt.axvline(mean_val, color='red', linestyle='--', linewidth=2, alpha=0.8)
-        plt.axvline(median_val, color='green', linestyle='--', linewidth=2, alpha=0.8)
-        
-        plt.xlabel('RUL (cycles)')
-        plt.ylabel('Frequency')
-        plt.title(f'{chemistry}\n(n={len(rul_values)}, μ={mean_val:.1f})')
-        plt.grid(True, alpha=0.3)
+        std_val = np.std(rul_values)
+        n_val = len(rul_values)
+        stats_text.append(f'{chemistry}: n={n_val}, μ={mean_val:.1f}, σ={std_val:.1f}')
     
-    # Hide empty subplots
-    for i in range(n_chemistries, n_rows * n_cols):
-        plt.subplot(n_rows, n_cols, i + 1)
-        plt.axis('off')
+    # Add text box with statistics
+    stats_str = '\n'.join(stats_text)
+    plt.text(0.02, 0.98, stats_str, transform=plt.gca().transAxes, 
+             verticalalignment='top', bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.9),
+             fontsize=10, family='monospace')
     
-    plt.suptitle('RUL Distributions Across All Chemistries', fontsize=16, fontweight='bold')
-    plt.tight_layout()
+    plt.xlabel('RUL (cycles)', fontsize=12)
+    plt.ylabel('Normalized Density', fontsize=12)
+    plt.title('RUL Distribution Curves Across All Chemistries', fontsize=14, fontweight='bold')
+    plt.legend(bbox_to_anchor=(1.05, 1), loc='upper left', fontsize=10)
+    plt.grid(True, alpha=0.3)
     
     # Save combined plot
     combined_path = output_path / 'all_chemistries_rul_distributions.png'
+    plt.tight_layout()
     plt.savefig(combined_path, dpi=300, bbox_inches='tight')
     plt.close()
     

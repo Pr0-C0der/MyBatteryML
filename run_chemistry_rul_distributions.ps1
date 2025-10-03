@@ -7,7 +7,12 @@ Write-Host "Starting RUL distribution analysis for all chemistries..."
 $chemistry_dirs = @(
     "data/datasets_requiring_access/HNEI",  # Mixed NMC-LCO chemistry
     "data/datasets_requiring_access/SNL",   # Multiple chemistries (LFP, NCA, NMC)
-    "data/datasets_requiring_access/UL_PUR" # NCA chemistry
+    "data/datasets_requiring_access/UL_PUR", # NCA chemistry
+    "data/datasets_requiring_access/MATR",  # MATR dataset
+    "data/datasets_requiring_access/CALCE", # CALCE dataset
+    "data/datasets_requiring_access/HUST",  # HUST dataset
+    "data/datasets_requiring_access/RWTH",  # RWTH dataset
+    "data/datasets_requiring_access/OX"     # OX dataset
 )
 
 # Check which directories exist
