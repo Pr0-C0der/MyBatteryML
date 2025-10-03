@@ -289,7 +289,7 @@ def plot_combined_distributions(all_rul_data: Dict[str, List[float]], output_dir
     plt.xlabel('RUL (cycles)', fontsize=12)
     plt.ylabel('Normalized Density', fontsize=12)
     plt.title('RUL Distribution Curves Across All Chemistries', fontsize=14, fontweight='bold')
-    plt.legend(bbox_to_anchor=(1.05, 1), loc='upper left', fontsize=10)
+    plt.legend(bbox_to_anchor=(0.98, 0.98), loc='upper right', fontsize=10)
     plt.grid(True, alpha=0.3)
     
     # Save combined plot
