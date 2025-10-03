@@ -286,7 +286,7 @@ class ChemistryCorrelationAnalyzer:
         numeric = df.select_dtypes(include=[np.number])
         if numeric.shape[1] < 2:
             return
-        corr = numeric.corr()
+        corr = numeric.corr(method='spearman')
         plt.figure(figsize=(12, 10))
         sns.heatmap(corr, annot=True, cmap='RdBu_r', center=0, square=True, fmt='.2f', cbar_kws={"shrink": .8}, annot_kws={'size': 8})
         plt.title(f'Feature Correlation Matrix - {battery.cell_id}', fontsize=14, pad=20)
@@ -307,7 +307,7 @@ class ChemistryCorrelationAnalyzer:
         if 'rul' not in df.columns:
             return
         numeric_cols = df.select_dtypes(include=[np.number]).columns
-        corr = df[numeric_cols].corr()
+        corr = df[numeric_cols].corr(method='spearman')
         if 'rul' not in corr.columns:
             return
         series = corr['rul'].drop('rul')
@@ -404,7 +404,7 @@ class ChemistryCorrelationAnalyzer:
         if sub.shape[0] < 2 or sub['rul'].nunique() < 2 or sub[feature].nunique() < 2:
             return None
         try:
-            corr = sub.corr().loc['rul', feature]
+            corr = sub.corr(method='spearman').loc['rul', feature]
             return float(corr) if np.isfinite(corr) else None
         except Exception:
             return None
