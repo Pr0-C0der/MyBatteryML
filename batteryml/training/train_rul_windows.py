@@ -62,6 +62,30 @@ from batteryml.data_analysis import cycle_features as cf
 from batteryml.chemistry_data_analysis.cycle_features import get_extractor_class as _chem_get_extractor_class
 
 
+def _fit_label_transform(y: np.ndarray) -> tuple[np.ndarray, dict]:
+    """Fit label transformation (log1p + standardization)."""
+    y = np.asarray(y, dtype=float)
+    yt = np.log1p(np.clip(y, a_min=0.0, a_max=None))  # log1p
+    mu = float(np.mean(yt))
+    sigma = float(np.std(yt)) if np.std(yt) > 1e-6 else 1e-6
+    yt = (yt - mu) / sigma
+    return yt, {'mu': mu, 'sigma': sigma}
+
+
+def _inverse_label_transform(yt: np.ndarray, stats: dict) -> np.ndarray:
+    """Inverse label transformation (unstandardize + expm1)."""
+    mu = stats['mu']
+    sigma = stats['sigma']
+    yt = np.asarray(yt, dtype=float)
+    yt = np.nan_to_num(yt, nan=0.0, posinf=0.0, neginf=0.0)
+    y_log = yt * sigma + mu
+    # Prevent overflow in expm1
+    y_log = np.clip(y_log, a_min=-50.0, a_max=709.0)
+    y = np.expm1(y_log)
+    y = np.nan_to_num(y, nan=0.0, posinf=np.finfo(float).max, neginf=0.0)
+    return np.clip(y, a_min=0.0, a_max=None)
+
+
 def _available_feature_fns() -> Dict[str, callable]:
     # Expose a curated set of feature functions from cycle_features
     names = [
@@ -719,24 +743,6 @@ def run(dataset: str, data_path: str, output_dir: str, window_size: int, feature
     # ----------------------
     # Label transformations
     # ----------------------
-    def _fit_label_transform(y: np.ndarray) -> tuple[np.ndarray, dict]:
-        y = np.asarray(y, dtype=float)
-        yt = np.log1p(np.clip(y, a_min=0.0, a_max=None))  # log1p
-        mu = float(np.mean(yt))
-        sigma = float(np.std(yt)) if np.std(yt) > 1e-6 else 1e-6
-        yt = (yt - mu) / sigma
-        return yt, {'mu': mu, 'sigma': sigma}
-
-    def _inverse_label_transform(yt: np.ndarray, stats: dict) -> np.ndarray:
-        mu = stats['mu']; sigma = stats['sigma']
-        yt = np.asarray(yt, dtype=float)
-        yt = np.nan_to_num(yt, nan=0.0, posinf=0.0, neginf=0.0)
-        y_log = yt * sigma + mu
-        # Prevent overflow in expm1
-        y_log = np.clip(y_log, a_min=-50.0, a_max=709.0)
-        y = np.expm1(y_log)
-        y = np.nan_to_num(y, nan=0.0, posinf=np.finfo(float).max, neginf=0.0)
-        return np.clip(y, a_min=0.0, a_max=None)
 
     # Fit transform on full training labels for final model
     y_train_t, train_label_stats = _fit_label_transform(y_train)
