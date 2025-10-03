@@ -254,11 +254,15 @@ class ChemistryTrainer:
         df = pd.DataFrame({self.chemistry_name: rounded_results})
         
         # Append to existing CSV or create new one
-        if self.rmse_file.exists():
-            existing_df = pd.read_csv(self.rmse_file, index_col=0)
-            # Merge with existing data, keeping all models and datasets
-            combined_df = existing_df.join(df, how='outer')
-            combined_df.to_csv(self.rmse_file)
+        if self.rmse_file.exists() and self.rmse_file.stat().st_size > 0:
+            try:
+                existing_df = pd.read_csv(self.rmse_file, index_col=0)
+                # Merge with existing data, keeping all models and datasets
+                combined_df = existing_df.join(df, how='outer')
+                combined_df.to_csv(self.rmse_file)
+            except (pd.errors.EmptyDataError, pd.errors.ParserError):
+                # File exists but is empty or corrupted, create new one
+                df.to_csv(self.rmse_file)
         else:
             df.to_csv(self.rmse_file)
         
