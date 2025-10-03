@@ -165,11 +165,12 @@ class ChemistryCorrelationAnalyzer:
     def _infer_dataset_from_path(self, p: Path) -> Optional[str]:
         name = p.as_posix().upper()
         candidates = [
-            'MATR', 'MATR1', 'MATR2', 'CALCE', 'SNL', 'RWTH', 'HNEI', 'UL_PUR', 'HUST', 'OX'
+            'MATR', 'MATR1', 'MATR2', 'CALCE', 'SNL', 'RWTH', 'HNEI', 'UL_PUR', 'UL-PUR', 'HUST', 'OX'
         ]
         for key in candidates:
             if f"/{key}/" in name or name.endswith(f"/{key}.PKL") or (f"_{key}_" in name) or (f"-{key}-" in name) or (f"/{key}_" in name):
-                return key
+                # Normalize UL-PUR to UL_PUR for consistency
+                return 'UL_PUR' if key in ['UL_PUR', 'UL-PUR'] else key
         return None
 
     def _infer_dataset(self, src: Path, battery: BatteryData) -> Optional[str]:
@@ -179,14 +180,16 @@ class ChemistryCorrelationAnalyzer:
         if key:
             return key
         cid = str(getattr(battery, 'cell_id', '')).upper()
-        for key in ['MATR', 'MATR1', 'MATR2', 'CALCE', 'SNL', 'RWTH', 'HNEI', 'UL_PUR', 'HUST', 'OX']:
+        for key in ['MATR', 'MATR1', 'MATR2', 'CALCE', 'SNL', 'RWTH', 'HNEI', 'UL_PUR', 'UL-PUR', 'HUST', 'OX']:
             if key in cid:
-                return key
+                # Normalize UL-PUR to UL_PUR for consistency
+                return 'UL_PUR' if key in ['UL_PUR', 'UL-PUR'] else key
         for attr in ['reference', 'description']:
             txt = str(getattr(battery, attr, '')).upper()
-            for key in ['MATR', 'MATR1', 'MATR2', 'CALCE', 'SNL', 'RWTH', 'HNEI', 'UL_PUR', 'HUST', 'OX']:
+            for key in ['MATR', 'MATR1', 'MATR2', 'CALCE', 'SNL', 'RWTH', 'HNEI', 'UL_PUR', 'UL-PUR', 'HUST', 'OX']:
                 if key in txt:
-                    return key
+                    # Normalize UL-PUR to UL_PUR for consistency
+                    return 'UL_PUR' if key in ['UL_PUR', 'UL-PUR'] else key
         return None
 
     def _get_extractor(self, src: Path, battery: BatteryData) -> Optional[DatasetSpecificCycleFeatures]:

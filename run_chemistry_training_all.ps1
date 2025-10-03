@@ -53,6 +53,13 @@ python -m batteryml.chemistry_data_analysis.chemistry_training --data_path data_
 python -m batteryml.chemistry_data_analysis.chemistry_training --data_path data_chemistries/nmc --output_dir chemistry_training_results_hms --cycle_limit 100 --window_size 10 --smoothing hms --verbose --use_gpu
 python -m batteryml.chemistry_data_analysis.chemistry_training --data_path data_chemistries/mixed_nmc_lco --output_dir chemistry_training_results_hms --cycle_limit 100 --window_size 10 --smoothing hms --verbose --use_gpu
 
+# Hyperparameter tuning examples (commented out by default - uncomment to run)
+# python -m batteryml.chemistry_data_analysis.chemistry_training --data_path data_chemistries/lfp --output_dir chemistry_training_results_tuned --cycle_limit 100 --window_size 10 --tune --cv_splits 5 --verbose --use_gpu
+# python -m batteryml.chemistry_data_analysis.chemistry_training --data_path data_chemistries/lco --output_dir chemistry_training_results_tuned --cycle_limit 100 --window_size 10 --tune --cv_splits 5 --verbose --use_gpu
+# python -m batteryml.chemistry_data_analysis.chemistry_training --data_path data_chemistries/nca --output_dir chemistry_training_results_tuned --cycle_limit 100 --window_size 10 --tune --cv_splits 5 --verbose --use_gpu
+# python -m batteryml.chemistry_data_analysis.chemistry_training --data_path data_chemistries/nmc --output_dir chemistry_training_results_tuned --cycle_limit 100 --window_size 10 --tune --cv_splits 5 --verbose --use_gpu
+# python -m batteryml.chemistry_data_analysis.chemistry_training --data_path data_chemistries/mixed_nmc_lco --output_dir chemistry_training_results_tuned --cycle_limit 100 --window_size 10 --tune --cv_splits 5 --verbose --use_gpu
+
 Write-Host "Chemistry-specific RUL training completed for all chemistries!"
 Write-Host "Check the following output directories:"
 Write-Host "- chemistry_training_results/ (standard training)"
@@ -61,3 +68,4 @@ Write-Host "- chemistry_training_results_200/ (200 cycle limit)"
 Write-Host "- chemistry_training_results_battery_only/ (battery-level only)"
 Write-Host "- chemistry_training_results_cycle_only/ (cycle-level only)"
 Write-Host "- chemistry_training_results_hms/ (with HMS smoothing)"
+Write-Host "- chemistry_training_results_tuned/ (with hyperparameter tuning - uncomment lines to run)"

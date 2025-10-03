@@ -74,8 +74,8 @@ class ChemistryTrainer:
         if self.dataset_hint:
             return str(self.dataset_hint).upper()
         
-        # Try tokens in metadata
-        tokens = ['MATR', 'MATR1', 'MATR2', 'CALCE', 'SNL', 'RWTH', 'HNEI', 'UL_PUR', 'HUST', 'OX']
+        # Try tokens in metadata - handle both UL_PUR and UL-PUR patterns
+        tokens = ['MATR', 'MATR1', 'MATR2', 'CALCE', 'SNL', 'RWTH', 'HNEI', 'UL_PUR', 'UL-PUR', 'HUST', 'OX']
         
         def _txt(x):
             try:
@@ -87,7 +87,8 @@ class ChemistryTrainer:
             s = _txt(source)
             for t in tokens:
                 if t in s:
-                    return t
+                    # Normalize UL-PUR to UL_PUR for consistency
+                    return 'UL_PUR' if t in ['UL_PUR', 'UL-PUR'] else t
         return None
 
     def _build_cycle_feature_table_extractor(self, battery: BatteryData, feature_names: List[str]) -> pd.DataFrame:
@@ -334,6 +335,13 @@ class ChemistryTrainer:
         # Apply label transformation
         y_train_t, train_label_stats = _fit_label_transform(y_train)
         
+        # Prepare test data once (if available)
+        X_test, y_test = None, None
+        if test_files:
+            if self.verbose:
+                print("Preparing test data...")
+            X_test, y_test, _ = self._prepare_dataset_battery_level(test_files, feature_fns, feature_names)
+        
         # Build models
         models = _build_models(use_gpu=self.use_gpu)
         
@@ -344,14 +352,125 @@ class ChemistryTrainer:
                 print(f"Training battery-level {name}...")
             
             try:
-                # Simple training without hyperparameter tuning for now
-                pipe.fit(X_train, y_train_t)
+                est = pipe
+                best_params = None
+                
+                if tune:
+                    # Define parameter grids for hyperparameter tuning
+                    if name == 'linear_regression':
+                        param_grid = {
+                            'model__fit_intercept': [True, False]
+                        }
+                    elif name == 'ridge':
+                        param_grid = {
+                            'model__alpha': [0.001, 0.01, 0.1, 1.0, 10.0, 100.0],
+                            'model__fit_intercept': [True, False],
+                        }
+                    elif name == 'elastic_net':
+                        param_grid = {
+                            'model__alpha': [1e-4, 1e-3, 1e-2, 1e-1],
+                            'model__l1_ratio': [0.1, 0.3, 0.5, 0.7, 0.9],
+                            'model__max_iter': [5000, 10000, 50000],
+                        }
+                    elif name == 'svr':
+                        param_grid = {
+                            'model__kernel': ['rbf', 'linear', 'poly', 'sigmoid'],
+                            'model__C': [0.001, 0.01, 0.1, 1.0],
+                            'model__gamma': ['scale', 'auto', 0.1, 0.01, 0.001],
+                            'model__epsilon': [0.05, 0.1, 0.2],
+                            'model__degree': [2, 3, 4],
+                        }
+                    elif name == 'random_forest':
+                        param_grid = {
+                            'model__n_estimators': [200, 400, 800],
+                            'model__max_depth': [None, 10, 20, 40, 80],
+                            'model__min_samples_split': [2, 5, 10],
+                            'model__min_samples_leaf': [1, 2, 4],
+                            'model__max_features': ['sqrt', 'log2', None],
+                        }
+                    elif name == 'xgboost':
+                        param_grid = {
+                            'model__n_estimators': [300, 600],
+                            'model__max_depth': [4, 6, 8, 10, 20],
+                            'model__learning_rate': [0.001, 0.01, 0.05, 0.1],
+                            'model__reg_alpha': [0.0, 0.001, 0.01],
+                            'model__reg_lambda': [1.0, 5.0, 10.0]
+                        }
+                    elif name == 'mlp':
+                        param_grid = {
+                            'model__hidden_layer_sizes': [(128, 64), (256, 128), (256, 128, 64)],
+                            'model__alpha': [1e-6, 1e-5, 1e-4],
+                            'model__learning_rate_init': [0.0005, 0.001, 0.01],
+                            'model__activation': ['relu', 'tanh'],
+                            'model__batch_size': [8, 32, 64, 128],
+                            'model__max_iter': [300, 900, 2000],
+                        }
+                    elif name == 'plsr':
+                        param_grid = {
+                            'model__n_components': [5, 10, 15, 20, 30],
+                        }
+                    elif name == 'pcr':
+                        param_grid = {
+                            'model__pca__n_components': [10, 20, 40, 60],
+                            'model__lr__fit_intercept': [True, False],
+                        }
+                    else:
+                        param_grid = {}
+
+                    if param_grid:
+                        # Group-aware CV to avoid leakage across batteries
+                        unique_groups = np.unique(g_train)
+                        n_splits = min(cv_splits, len(unique_groups)) if len(unique_groups) > 1 else 2
+                        cv = GroupKFold(n_splits=n_splits)
+                        grid = list(ParameterGrid(param_grid))
+                        cv_results = []
+                        best_score = np.inf
+                        best_estimator = None
+                        pbar = tqdm(grid, desc=f"Tuning {name} ({len(grid)} cfgs x {n_splits} folds)")
+                        for params in pbar:
+                            fold_rmses = []
+                            fold_maes = []
+                            for tr_idx, va_idx in cv.split(X_train, y_train, groups=g_train):
+                                X_tr, X_va = X_train[tr_idx], X_train[va_idx]
+                                y_tr, y_va = y_train[tr_idx], y_train[va_idx]
+                                # Fit label transform on training fold
+                                y_tr_t, fold_stats = _fit_label_transform(y_tr)
+                                model = clone(pipe)
+                                model.set_params(**params)
+                                model.fit(X_tr, y_tr_t)
+                                pred_t = model.predict(X_va)
+                                pred_t = np.asarray(pred_t, dtype=float)
+                                pred_t = np.nan_to_num(pred_t, nan=0.0, posinf=0.0, neginf=0.0)
+                                # Clamp transformed predictions to reasonable range before inverse transform
+                                pred_t = np.clip(pred_t, a_min=-50.0, a_max=50.0)
+                                pred = _inverse_label_transform(pred_t, fold_stats)
+                                y_va_arr = np.asarray(y_va, dtype=float)
+                                fold_maes.append(mean_absolute_error(y_va_arr, np.asarray(pred, dtype=float)))
+                                fold_rmses.append(mean_squared_error(y_va_arr, np.asarray(pred, dtype=float)) ** 0.5)
+                            mean_mae = float(np.mean(fold_maes)) if fold_maes else np.inf
+                            mean_rmse = float(np.mean(fold_rmses)) if fold_rmses else np.inf
+                            cv_results.append({**{f"param:{k}": v for k, v in params.items()}, 'mean_MAE': mean_mae, 'mean_RMSE': mean_rmse})
+                            pbar.set_postfix({"RMSE": f"{mean_rmse:.3f}"})
+                            if mean_rmse < best_score:
+                                best_score = mean_rmse
+                                best_params = params
+                                best_estimator = clone(pipe).set_params(**params)
+                        if best_estimator is not None:
+                            est = best_estimator
+                        # Save CV results
+                        cv_path = self.battery_level_dir / f"{self.chemistry_name}_{name}_battery_level_cv_results.csv"
+                        pd.DataFrame(cv_results).to_csv(cv_path, index=False)
+                        if self.verbose:
+                            print(f"Best {name} params: {best_params} (RMSE: {best_score:.3f})")
+
+                # Rebuild estimator with best params (if any) and fit on full train set
+                if best_params is not None:
+                    est = clone(pipe).set_params(**best_params)
+                est.fit(X_train, y_train_t)
                 
                 # Evaluate on test set if available
-                if test_files:
-                    X_test, y_test, _ = self._prepare_dataset_battery_level(test_files, feature_fns, feature_names)
-                    if X_test.size > 0:
-                        y_pred_t = pipe.predict(X_test)
+                if X_test is not None and X_test.size > 0:
+                    y_pred_t = est.predict(X_test)
                         y_pred_t = np.asarray(y_pred_t, dtype=float)
                         y_pred_t = np.nan_to_num(y_pred_t, nan=0.0, posinf=0.0, neginf=0.0)
                         y_pred_t = np.clip(y_pred_t, a_min=-50.0, a_max=50.0)
@@ -360,15 +479,13 @@ class ChemistryTrainer:
                         results[name] = rmse
                         if self.verbose:
                             print(f"Battery-level {name} RMSE: {rmse:.3f}")
-                    else:
-                        results[name] = np.inf
                 else:
                     results[name] = 0.0  # No test set available
                 
                 # Save model
                 model_path = self.battery_level_dir / f"{self.chemistry_name}_{name}_battery_level_model.pkl"
                 import joblib
-                joblib.dump(pipe, model_path)
+                joblib.dump(est, model_path)
                 
             except Exception as e:
                 if self.verbose:
@@ -412,6 +529,13 @@ class ChemistryTrainer:
         # Apply label transformation
         y_train_t, train_label_stats = _fit_label_transform(y_train)
         
+        # Prepare test data once (if available)
+        X_test, y_test = None, None
+        if test_files:
+            if self.verbose:
+                print("Preparing test data...")
+            X_test, y_test, _ = self._prepare_dataset_windows(test_files, feature_fns, feature_names, window_size)
+        
         # Build models
         models = _build_models(use_gpu=self.use_gpu)
         
@@ -422,14 +546,125 @@ class ChemistryTrainer:
                 print(f"Training cycle-level {name}...")
             
             try:
-                # Simple training without hyperparameter tuning for now
-                pipe.fit(X_train, y_train_t)
+                est = pipe
+                best_params = None
+                
+                if tune:
+                    # Define parameter grids for hyperparameter tuning
+                    if name == 'linear_regression':
+                        param_grid = {
+                            'model__fit_intercept': [True, False]
+                        }
+                    elif name == 'ridge':
+                        param_grid = {
+                            'model__alpha': [0.001, 0.01, 0.1, 1.0, 10.0, 100.0],
+                            'model__fit_intercept': [True, False],
+                        }
+                    elif name == 'elastic_net':
+                        param_grid = {
+                            'model__alpha': [1e-4, 1e-3, 1e-2, 1e-1],
+                            'model__l1_ratio': [0.1, 0.3, 0.5, 0.7, 0.9],
+                            'model__max_iter': [5000, 10000, 50000],
+                        }
+                    elif name == 'svr':
+                        param_grid = {
+                            'model__kernel': ['rbf', 'linear', 'poly', 'sigmoid'],
+                            'model__C': [0.001, 0.01, 0.1, 1.0],
+                            'model__gamma': ['scale', 'auto', 0.1, 0.01, 0.001],
+                            'model__epsilon': [0.05, 0.1, 0.2],
+                            'model__degree': [2, 3, 4],
+                        }
+                    elif name == 'random_forest':
+                        param_grid = {
+                            'model__n_estimators': [200, 400, 800],
+                            'model__max_depth': [None, 10, 20, 40, 80],
+                            'model__min_samples_split': [2, 5, 10],
+                            'model__min_samples_leaf': [1, 2, 4],
+                            'model__max_features': ['sqrt', 'log2', None],
+                        }
+                    elif name == 'xgboost':
+                        param_grid = {
+                            'model__n_estimators': [300, 600],
+                            'model__max_depth': [4, 6, 8, 10, 20],
+                            'model__learning_rate': [0.001, 0.01, 0.05, 0.1],
+                            'model__reg_alpha': [0.0, 0.001, 0.01],
+                            'model__reg_lambda': [1.0, 5.0, 10.0]
+                        }
+                    elif name == 'mlp':
+                        param_grid = {
+                            'model__hidden_layer_sizes': [(128, 64), (256, 128), (256, 128, 64)],
+                            'model__alpha': [1e-6, 1e-5, 1e-4],
+                            'model__learning_rate_init': [0.0005, 0.001, 0.01],
+                            'model__activation': ['relu', 'tanh'],
+                            'model__batch_size': [8, 32, 64, 128],
+                            'model__max_iter': [300, 900, 2000],
+                        }
+                    elif name == 'plsr':
+                        param_grid = {
+                            'model__n_components': [5, 10, 15, 20, 30],
+                        }
+                    elif name == 'pcr':
+                        param_grid = {
+                            'model__pca__n_components': [10, 20, 40, 60],
+                            'model__lr__fit_intercept': [True, False],
+                        }
+                    else:
+                        param_grid = {}
+
+                    if param_grid:
+                        # Group-aware CV to avoid leakage across batteries
+                        unique_groups = np.unique(g_train)
+                        n_splits = min(cv_splits, len(unique_groups)) if len(unique_groups) > 1 else 2
+                        cv = GroupKFold(n_splits=n_splits)
+                        grid = list(ParameterGrid(param_grid))
+                        cv_results = []
+                        best_score = np.inf
+                        best_estimator = None
+                        pbar = tqdm(grid, desc=f"Tuning {name} ({len(grid)} cfgs x {n_splits} folds)")
+                        for params in pbar:
+                            fold_rmses = []
+                            fold_maes = []
+                            for tr_idx, va_idx in cv.split(X_train, y_train, groups=g_train):
+                                X_tr, X_va = X_train[tr_idx], X_train[va_idx]
+                                y_tr, y_va = y_train[tr_idx], y_train[va_idx]
+                                # Fit label transform on training fold
+                                y_tr_t, fold_stats = _fit_label_transform(y_tr)
+                                model = clone(pipe)
+                                model.set_params(**params)
+                                model.fit(X_tr, y_tr_t)
+                                pred_t = model.predict(X_va)
+                                pred_t = np.asarray(pred_t, dtype=float)
+                                pred_t = np.nan_to_num(pred_t, nan=0.0, posinf=0.0, neginf=0.0)
+                                # Clamp transformed predictions to reasonable range before inverse transform
+                                pred_t = np.clip(pred_t, a_min=-50.0, a_max=50.0)
+                                pred = _inverse_label_transform(pred_t, fold_stats)
+                                y_va_arr = np.asarray(y_va, dtype=float)
+                                fold_maes.append(mean_absolute_error(y_va_arr, np.asarray(pred, dtype=float)))
+                                fold_rmses.append(mean_squared_error(y_va_arr, np.asarray(pred, dtype=float)) ** 0.5)
+                            mean_mae = float(np.mean(fold_maes)) if fold_maes else np.inf
+                            mean_rmse = float(np.mean(fold_rmses)) if fold_rmses else np.inf
+                            cv_results.append({**{f"param:{k}": v for k, v in params.items()}, 'mean_MAE': mean_mae, 'mean_RMSE': mean_rmse})
+                            pbar.set_postfix({"RMSE": f"{mean_rmse:.3f}"})
+                            if mean_rmse < best_score:
+                                best_score = mean_rmse
+                                best_params = params
+                                best_estimator = clone(pipe).set_params(**params)
+                        if best_estimator is not None:
+                            est = best_estimator
+                        # Save CV results
+                        cv_path = self.cycle_level_dir / f"{self.chemistry_name}_{name}_cycle_level_cv_results.csv"
+                        pd.DataFrame(cv_results).to_csv(cv_path, index=False)
+                        if self.verbose:
+                            print(f"Best {name} params: {best_params} (RMSE: {best_score:.3f})")
+
+                # Rebuild estimator with best params (if any) and fit on full train set
+                if best_params is not None:
+                    est = clone(pipe).set_params(**best_params)
+                est.fit(X_train, y_train_t)
                 
                 # Evaluate on test set if available
-                if test_files:
-                    X_test, y_test, _ = self._prepare_dataset_windows(test_files, feature_fns, feature_names, window_size)
-                    if X_test.size > 0:
-                        y_pred_t = pipe.predict(X_test)
+                if X_test is not None and X_test.size > 0:
+                    y_pred_t = est.predict(X_test)
                         y_pred_t = np.asarray(y_pred_t, dtype=float)
                         y_pred_t = np.nan_to_num(y_pred_t, nan=0.0, posinf=0.0, neginf=0.0)
                         y_pred_t = np.clip(y_pred_t, a_min=-50.0, a_max=50.0)
@@ -438,15 +673,13 @@ class ChemistryTrainer:
                         results[name] = rmse
                         if self.verbose:
                             print(f"Cycle-level {name} RMSE: {rmse:.3f}")
-                    else:
-                        results[name] = np.inf
                 else:
                     results[name] = 0.0  # No test set available
                 
                 # Save model
                 model_path = self.cycle_level_dir / f"{self.chemistry_name}_{name}_cycle_level_model.pkl"
                 import joblib
-                joblib.dump(pipe, model_path)
+                joblib.dump(est, model_path)
                 
             except Exception as e:
                 if self.verbose:
@@ -599,6 +832,8 @@ def main():
     parser.add_argument('--battery_level_only', action='store_true', help='Only train battery-level models')
     parser.add_argument('--cycle_level_only', action='store_true', help='Only train cycle-level models')
     parser.add_argument('--use_gpu', action='store_true', help='Use GPU acceleration')
+    parser.add_argument('--tune', action='store_true', help='Enable hyperparameter tuning')
+    parser.add_argument('--cv_splits', type=int, default=5, help='Number of cross-validation splits')
     parser.add_argument('--verbose', action='store_true', help='Verbose logging')
     args = parser.parse_args()
 
@@ -614,11 +849,11 @@ def main():
     )
 
     if args.battery_level_only:
-        results = trainer.train_battery_level(args.window_size, args.features)
+        results = trainer.train_battery_level(args.window_size, args.features, args.tune, args.cv_splits)
     elif args.cycle_level_only:
-        results = trainer.train_cycle_level(args.window_size, args.features)
+        results = trainer.train_cycle_level(args.window_size, args.features, args.tune, args.cv_splits)
     else:
-        results = trainer.train_both(args.window_size, args.features)
+        results = trainer.train_both(args.window_size, args.features, args.tune, args.cv_splits)
 
     if args.verbose:
         print(f"Training completed for {trainer.chemistry_name}")
