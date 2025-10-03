@@ -247,7 +247,7 @@ class ChemistryTrainer:
         
         # Group files by dataset
         dataset_groups: Dict[str, List[Path]] = {}
-        for f in files:
+        for f in tqdm(files, desc="Grouping batteries by dataset", unit="battery"):
             try:
                 battery = BatteryData.load(f)
                 dataset = self._infer_dataset_for_battery(battery)
@@ -339,7 +339,7 @@ class ChemistryTrainer:
         
         # Train models
         results = {}
-        for name, pipe in models.items():
+        for name, pipe in tqdm(models.items(), desc="Training battery-level models", unit="model"):
             if self.verbose:
                 print(f"Training battery-level {name}...")
             
@@ -417,7 +417,7 @@ class ChemistryTrainer:
         
         # Train models
         results = {}
-        for name, pipe in models.items():
+        for name, pipe in tqdm(models.items(), desc="Training cycle-level models", unit="model"):
             if self.verbose:
                 print(f"Training cycle-level {name}...")
             
