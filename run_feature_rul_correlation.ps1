@@ -11,34 +11,33 @@ param(
     [int]$Width = 12,
     [int]$Height = 8,
     [string[]]$Measures = @("mean", "variance", "median", "kurtosis", "skewness", "min", "max"),
-    [int[]]$MultiCycle = @(),
+    [ValidateSet("single_cycle", "aggregated")]
+    [string]$Method = "single_cycle",
+    [int]$CycleLimit = 0,
+    [ValidateSet("none", "hms", "ma", "median")]
+    [string]$Smoothing = "none",
+    [int]$SmoothingWindow = 5,
     [string[]]$AllDatasets = @(),
     [switch]$Verbose
 )
 
 # Set default output path if not provided
 if ($Output -eq "") {
-    if ($MultiCycle.Count -gt 0) {
-        $Output = "correlation_multi_cycle_${Feature}_${DatasetName}.png"
-    }
-    elseif ($AllDatasets.Count -gt 0) {
+    if ($AllDatasets.Count -gt 0) {
         $Output = "feature_rul_correlation_${Feature}_cycle_${Cycle}"
     }
     else {
-        $Output = "correlation_${Feature}_cycle_${Cycle}_${DatasetName}.png"
+        $Output = "correlation_${Feature}_${DatasetName}.png"
     }
 }
 
-Write-Host "Running Feature-RUL Correlation Analysis..." -ForegroundColor Green
+Write-Host "Running Feature-RUL Correlation Analysis (Diverging Bar Chart)..." -ForegroundColor Green
 Write-Host "Dataset: $DatasetName" -ForegroundColor Cyan
 Write-Host "Feature: $Feature" -ForegroundColor Cyan
 Write-Host "Cycle: $Cycle" -ForegroundColor Cyan
 Write-Host "Output: $Output" -ForegroundColor Cyan
 
-if ($MultiCycle.Count -gt 0) {
-    Write-Host "Mode: Multi-cycle analysis (cycles: $($MultiCycle -join ', '))" -ForegroundColor Yellow
-}
-elseif ($AllDatasets.Count -gt 0) {
+if ($AllDatasets.Count -gt 0) {
     Write-Host "Mode: All datasets analysis (datasets: $($AllDatasets -join ', '))" -ForegroundColor Yellow
 }
 else {
@@ -46,6 +45,13 @@ else {
 }
 
 Write-Host "Statistical measures: $($Measures -join ', ')" -ForegroundColor Magenta
+Write-Host "Aggregation method: $Method" -ForegroundColor Cyan
+if ($CycleLimit -gt 0) {
+    Write-Host "Cycle limit: $CycleLimit" -ForegroundColor Yellow
+}
+if ($Smoothing -ne "none") {
+    Write-Host "Smoothing: $Smoothing (window: $SmoothingWindow)" -ForegroundColor Yellow
+}
 
 # Check if data directory exists
 if (-not (Test-Path $DataDir)) {
@@ -74,12 +80,16 @@ $pythonArgs = @(
     "--output", $Output,
     "--figsize", $Width, $Height,
     "--measures"
-) + $Measures
+) + $Measures + @("--method", $Method)
 
-if ($MultiCycle.Count -gt 0) {
-    $pythonArgs += "--multi_cycle"
-    $pythonArgs += $MultiCycle
+if ($CycleLimit -gt 0) {
+    $pythonArgs += @("--cycle_limit", $CycleLimit)
 }
+
+if ($Smoothing -ne "none") {
+    $pythonArgs += @("--smoothing", $Smoothing, "--smoothing_window", $SmoothingWindow)
+}
+
 
 if ($AllDatasets.Count -gt 0) {
     $pythonArgs += "--all_datasets"
@@ -93,7 +103,7 @@ if ($Verbose) {
 try {
     python @pythonArgs
     if ($LASTEXITCODE -eq 0) {
-        Write-Host "Successfully created feature-RUL correlation analysis plot(s)!" -ForegroundColor Green
+        Write-Host "Successfully created feature-RUL correlation diverging bar chart(s)!" -ForegroundColor Green
         Write-Host "Plot(s) saved to: $Output" -ForegroundColor Cyan
     }
     else {
