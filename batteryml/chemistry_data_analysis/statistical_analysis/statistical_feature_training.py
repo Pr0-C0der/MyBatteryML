@@ -66,7 +66,7 @@ class StatisticalFeatureTrainer:
         print(f"Loading and extracting features for dataset: {dataset_name}")
         
         # Use the correlation analyzer to load data
-        data = self.correlation_analyzer.load_battery_data(dataset_name, self.data_dir)
+        data = self.correlation_analyzer.load_battery_data(dataset_name)
         
         # Apply cycle limit if specified
         if cycle_limit is not None:
