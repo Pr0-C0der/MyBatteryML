@@ -65,8 +65,8 @@ class StatisticalFeatureTrainer:
         """
         print(f"Loading and extracting features for dataset: {dataset_name}")
         
-        # Use the correlation analyzer to load data (it uses self.data_dir internally)
-        data = self.correlation_analyzer.load_battery_data(dataset_name)
+        # Use the correlation analyzer to load data
+        data = self.correlation_analyzer.load_battery_data(dataset_name, self.data_dir)
         
         # Apply cycle limit if specified
         if cycle_limit is not None:
@@ -185,12 +185,11 @@ class StatisticalFeatureTrainer:
         Returns:
             List of selected feature names
         """
-        print(f"Selecting top {n_features} features with highest absolute correlation to RUL...")
+        print(f"Selecting top {n_features} features with highest correlation to RUL...")
         
-        # Get top features
         top_features = correlation_df.head(n_features)['feature'].tolist()
         
-        print("Selected features:")
+        print(f"Selected features:")
         for i, (_, row) in enumerate(correlation_df.head(n_features).iterrows(), 1):
             print(f"  {i:2d}. {row['feature']:30s} (correlation: {row['correlation']:6.3f})")
         
@@ -205,10 +204,9 @@ class StatisticalFeatureTrainer:
             feature_names: List of selected feature names (e.g., 'avg_voltage_mean', 'cycle_length_std')
             
         Returns:
-            Tuple of (X, y) arrays where y is log(RUL)
+            Tuple of (X, y) arrays
         """
         print("Preparing battery-level training data...")
-        print("Target: log(RUL) for training, will convert to actual RUL for evaluation")
         
         # Create battery-level aggregated features
         battery_features = []
@@ -256,7 +254,7 @@ class StatisticalFeatureTrainer:
                 else:
                     battery_row[feature_name] = np.nan
             
-            # Get log RUL for this battery (use mean log_rul)
+            # Get RUL for this battery (use mean log_rul)
             rul_values = battery_data['log_rul'].dropna().values
             if len(rul_values) > 0:
                 battery_rul = np.mean(rul_values)
@@ -276,8 +274,7 @@ class StatisticalFeatureTrainer:
         y = y[valid_mask]
         
         print(f"Training data shape: {X.shape}")
-        print(f"Target range (log RUL): {y.min():.3f} to {y.max():.3f}")
-        print(f"Target range (actual RUL): {np.exp(y.min()):.1f} to {np.exp(y.max()):.1f} cycles")
+        print(f"Target range: {y.min():.3f} to {y.max():.3f}")
         
         return X, y
     
@@ -366,7 +363,7 @@ class StatisticalFeatureTrainer:
             output_path: Path to save the plot (optional)
         """
         if self.model is None:
-            print("No trained model found. Please train the model first.")
+            print("No model trained yet!")
             return
         
         print("Plotting feature importance...")
@@ -375,7 +372,7 @@ class StatisticalFeatureTrainer:
         importance = self.model.feature_importances_
         feature_names = self.feature_names
         
-        # Create DataFrame for easier plotting
+        # Create DataFrame for plotting
         importance_df = pd.DataFrame({
             'feature': feature_names,
             'importance': importance
@@ -386,24 +383,27 @@ class StatisticalFeatureTrainer:
         bars = plt.barh(range(len(importance_df)), importance_df['importance'])
         plt.yticks(range(len(importance_df)), importance_df['feature'])
         plt.xlabel('Feature Importance')
-        plt.title('XGBoost Feature Importance for RUL Prediction')
-        plt.grid(axis='x', alpha=0.3)
+        plt.title('XGBoost Feature Importance (Top 15 Correlated Features)')
+        plt.grid(True, alpha=0.3)
         
         # Add value labels on bars
-        for i, (idx, row) in enumerate(importance_df.iterrows()):
-            plt.text(row['importance'] + 0.001, i, f'{row["importance"]:.3f}', 
-                    va='center', fontsize=9)
+        for i, bar in enumerate(bars):
+            width = bar.get_width()
+            plt.text(width + 0.001, bar.get_y() + bar.get_height()/2, 
+                    f'{width:.3f}', ha='left', va='center', fontsize=8)
         
         plt.tight_layout()
         
         if output_path:
-            plt.savefig(output_path, dpi=300, bbox_inches='tight')
+            plt.savefig(output_path, dpi=300, bbox_inches='tight', facecolor='white')
             print(f"Feature importance plot saved to: {output_path}")
+        else:
+            plt.show()
         
-        plt.show()
+        plt.close()
     
     def plot_predictions(self, X_test: np.ndarray, y_test: np.ndarray, 
-                        output_path: str = None, max_samples: int = 50):
+                        output_path: str = None):
         """
         Plot actual vs predicted RUL values.
         
@@ -411,28 +411,21 @@ class StatisticalFeatureTrainer:
             X_test: Test features
             y_test: Test targets (log RUL)
             output_path: Path to save the plot (optional)
-            max_samples: Maximum number of samples to plot
         """
         if self.model is None:
-            print("No trained model found. Please train the model first.")
+            print("No model trained yet!")
             return
         
         print("Plotting predictions...")
         
-        # Make predictions
+        # Make predictions (these are log RUL predictions)
         y_test_pred_log = self.model.predict(X_test)
         
-        # Convert to actual RUL
-        y_test_actual = np.exp(y_test)
-        y_test_pred_actual = np.exp(y_test_pred_log)
+        # Convert to actual RUL for plotting
+        y_test_actual = np.exp(y_test)  # Convert log RUL to actual RUL
+        y_test_pred_actual = np.exp(y_test_pred_log)  # Convert log RUL predictions to actual RUL
         
-        # Limit samples for plotting
-        if len(y_test_actual) > max_samples:
-            indices = np.random.choice(len(y_test_actual), max_samples, replace=False)
-            y_test_actual = y_test_actual[indices]
-            y_test_pred_actual = y_test_pred_actual[indices]
-        
-        # Create scatter plot
+        # Create plot
         plt.figure(figsize=(10, 8))
         plt.scatter(y_test_actual, y_test_pred_actual, alpha=0.6, s=50)
         
@@ -443,11 +436,11 @@ class StatisticalFeatureTrainer:
         
         plt.xlabel('Actual RUL (cycles)')
         plt.ylabel('Predicted RUL (cycles)')
-        plt.title('Actual vs Predicted RUL')
+        plt.title('Actual vs Predicted RUL (Test Set)')
         plt.legend()
-        plt.grid(alpha=0.3)
+        plt.grid(True, alpha=0.3)
         
-        # Calculate and display R²
+        # Add R² score
         from sklearn.metrics import r2_score
         r2 = r2_score(y_test_actual, y_test_pred_actual)
         plt.text(0.05, 0.95, f'R² = {r2:.3f}', transform=plt.gca().transAxes, 
@@ -456,23 +449,25 @@ class StatisticalFeatureTrainer:
         plt.tight_layout()
         
         if output_path:
-            plt.savefig(output_path, dpi=300, bbox_inches='tight')
+            plt.savefig(output_path, dpi=300, bbox_inches='tight', facecolor='white')
             print(f"Predictions plot saved to: {output_path}")
+        else:
+            plt.show()
         
-        plt.show()
+        plt.close()
     
-    def run_training_pipeline(self, dataset_name: str, cycle_limit: int = None,
-                             n_features: int = 15, test_size: float = 0.3, 
-                             random_state: int = 42) -> Dict[str, float]:
+    def train_and_evaluate(self, dataset_name: str, cycle_limit: int = None, 
+                          n_features: int = 15, test_size: float = 0.3,
+                          random_state: int = 42) -> Dict[str, float]:
         """
-        Run the complete training pipeline.
+        Complete training and evaluation pipeline.
         
         Args:
-            dataset_name: Name of the dataset to train on
-            cycle_limit: Maximum number of cycles to use (None for all)
+            dataset_name: Name of the dataset
+            cycle_limit: Maximum number of cycles to use
             n_features: Number of top features to select
-            test_size: Fraction of data to use for testing
-            random_state: Random seed for reproducibility
+            test_size: Test set size (0.3 for 70/30 split)
+            random_state: Random state for reproducibility
             
         Returns:
             Dictionary with evaluation metrics
@@ -531,66 +526,96 @@ class StatisticalFeatureTrainer:
             metrics = self.train_model(X_train, y_train, X_test, y_test)
             pbar.update(1)
         
-        # Generate plots
-        print("\nGenerating plots...")
-        
-        # Feature importance plot
-        importance_path = f"feature_importance_{dataset_name}.png"
-        self.plot_feature_importance(importance_path)
-        
-        # Predictions plot
-        predictions_path = f"predictions_{dataset_name}.png"
-        self.plot_predictions(X_test, y_test, predictions_path)
+        # Print results
+        print("\n" + "=" * 60)
+        print("TRAINING RESULTS")
+        print("=" * 60)
+        print(f"Dataset: {dataset_name}")
+        print(f"Features used: {len(self.feature_names)}")
+        print(f"Training samples: {X_train.shape[0]}")
+        print(f"Test samples: {X_test.shape[0]}")
+        print()
+        print("TRAINING METRICS:")
+        print(f"  RMSE: {metrics['train_rmse']:.3f}")
+        print(f"  MAE:  {metrics['train_mae']:.3f}")
+        print(f"  MAPE: {metrics['train_mape']:.2f}%")
+        print()
+        print("TEST METRICS:")
+        print(f"  RMSE: {metrics['test_rmse']:.3f}")
+        print(f"  MAE:  {metrics['test_mae']:.3f}")
+        print(f"  MAPE: {metrics['test_mape']:.2f}%")
+        print("=" * 60)
         
         return metrics
 
 
 def main():
-    """Main function to run the statistical feature training."""
-    parser = argparse.ArgumentParser(description="Train XGBoost on top correlated features for RUL prediction")
-    parser.add_argument("dataset_name", help="Name of the dataset to train on")
-    parser.add_argument("--n_features", type=int, default=15, help="Number of top features to select (default: 15)")
-    parser.add_argument("--cycle_limit", type=int, default=100, help="Maximum number of cycles to use (default: 100)")
-    parser.add_argument("--data_dir", type=str, default="data", help="Base directory containing the data (default: data)")
-    parser.add_argument("--output", type=str, default="", help="Output directory for plots (default: current directory)")
-    parser.add_argument("--figsize", type=int, nargs=2, default=[12, 8], help="Figure size as width height (default: 12 8)")
-    parser.add_argument("--verbose", action="store_true", help="Enable verbose output")
+    """Main function to run statistical feature training."""
+    parser = argparse.ArgumentParser(description='Train XGBoost on statistical features with highest RUL correlation')
+    parser.add_argument('dataset_name', help='Name of the dataset (e.g., UL_PUR, MATR, CALCE)')
+    parser.add_argument('--cycle_limit', '-c', type=int, default=None, 
+                       help='Maximum number of cycles to use (default: all)')
+    parser.add_argument('--n_features', '-n', type=int, default=15, 
+                       help='Number of top features to select (default: 15)')
+    parser.add_argument('--test_size', '-t', type=float, default=0.3, 
+                       help='Test set size (default: 0.3 for 70/30 split)')
+    parser.add_argument('--data_dir', '-d', default='data', 
+                       help='Base directory containing the data (default: data)')
+    parser.add_argument('--output_dir', '-o', default='statistical_training_results', 
+                       help='Output directory for plots (default: statistical_training_results)')
+    parser.add_argument('--random_state', '-r', type=int, default=42, 
+                       help='Random state for reproducibility (default: 42)')
+    parser.add_argument('--verbose', '-v', action='store_true', help='Verbose output')
     
     args = parser.parse_args()
     
-    # Set figure size
-    plt.rcParams['figure.figsize'] = args.figsize
-    
-    # Create trainer
-    trainer = StatisticalFeatureTrainer(args.data_dir)
-    
-    # Run training pipeline
     try:
-        metrics = trainer.run_training_pipeline(
+        # Create output directory
+        output_dir = Path(args.output_dir)
+        output_dir.mkdir(exist_ok=True)
+        
+        # Initialize trainer
+        trainer = StatisticalFeatureTrainer(args.data_dir)
+        
+        # Run training and evaluation
+        metrics = trainer.train_and_evaluate(
             dataset_name=args.dataset_name,
             cycle_limit=args.cycle_limit,
-            n_features=args.n_features
+            n_features=args.n_features,
+            test_size=args.test_size,
+            random_state=args.random_state
         )
         
-        print("\n" + "="*60)
-        print("TRAINING COMPLETED SUCCESSFULLY!")
-        print("="*60)
-        print(f"Dataset: {args.dataset_name}")
-        print(f"Top {args.n_features} features selected")
-        print(f"Test RMSE: {metrics['test_rmse']:.2f} cycles")
-        print(f"Test MAE:  {metrics['test_mae']:.2f} cycles")
-        print(f"Test MAPE: {metrics['test_mape']:.2f}%")
-        print("="*60)
+        # Generate plots
+        if trainer.model is not None:
+            print("Generating plots...")
+            
+            # Feature importance plot
+            print("  - Creating feature importance plot...")
+            importance_path = output_dir / f"feature_importance_{args.dataset_name}.png"
+            trainer.plot_feature_importance(str(importance_path))
+            
+            # Predictions plot (need to reload test data)
+            print("  - Creating predictions plot...")
+            data = trainer.load_and_extract_features(args.dataset_name, args.cycle_limit)
+            data_with_rul = trainer.calculate_rul_labels(data)
+            X, y = trainer.prepare_training_data(data_with_rul, trainer.feature_names)
+            X_train, X_test, y_train, y_test = train_test_split(
+                X, y, test_size=args.test_size, random_state=args.random_state
+            )
+            
+            predictions_path = output_dir / f"predictions_{args.dataset_name}.png"
+            trainer.plot_predictions(X_test, y_test, str(predictions_path))
+        
+        print(f"\nResults saved to: {output_dir}")
+        print("Training completed successfully!")
         
     except Exception as e:
-        print(f"Error during training: {e}")
-        if args.verbose:
-            import traceback
-            traceback.print_exc()
+        print(f"Error: {e}")
         return 1
     
     return 0
 
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     exit(main())

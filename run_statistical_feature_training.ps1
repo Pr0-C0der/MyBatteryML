@@ -4,19 +4,14 @@ param(
     [Parameter(Mandatory = $true)]
     [string]$DatasetName,
     
+    [int]$CycleLimit = 0,  # 0 means use all cycles
     [int]$NFeatures = 15,
-    [int]$CycleLimit = 100,
-    [string]$DataDir = "data/processed",
-    [string]$Output = "",
-    [int]$Width = 12,
-    [int]$Height = 8,
+    [double]$TestSize = 0.3,
+    [string]$DataDir = "data",
+    [string]$OutputDir = "statistical_training_results",
+    [int]$RandomState = 42,
     [switch]$VerboseOutput
 )
-
-# Set default output path if not provided
-if ([string]::IsNullOrEmpty($Output)) {
-    $Output = "statistical_training_results"
-}
 
 # Set default cycle limit message
 if ($CycleLimit -eq 0) {
@@ -30,8 +25,8 @@ Write-Host "Running Statistical Feature Training for RUL Prediction..." -Foregro
 Write-Host "Dataset: $DatasetName" -ForegroundColor Cyan
 Write-Host "Cycle Limit: $CycleMessage" -ForegroundColor Cyan
 Write-Host "Top Features: $NFeatures" -ForegroundColor Cyan
-Write-Host "Figure Size: ${Width}x${Height}" -ForegroundColor Cyan
-Write-Host "Output Directory: $Output" -ForegroundColor Cyan
+Write-Host "Test Size: $TestSize (70/30 split)" -ForegroundColor Cyan
+Write-Host "Output Directory: $OutputDir" -ForegroundColor Cyan
 
 # Check if data directory exists
 if (-not (Test-Path $DataDir)) {
@@ -53,43 +48,33 @@ $pythonArgs = @(
     "batteryml/chemistry_data_analysis/statistical_analysis/statistical_feature_training.py",
     $DatasetName,
     "--n_features", $NFeatures,
-    "--cycle_limit", $CycleLimit,
+    "--test_size", $TestSize,
     "--data_dir", $DataDir,
-    "--output", $Output,
-    "--figsize", $Width, $Height
+    "--output_dir", $OutputDir,
+    "--random_state", $RandomState
 )
+
+if ($CycleLimit -gt 0) {
+    $pythonArgs += "--cycle_limit", $CycleLimit
+}
 
 if ($VerboseOutput) {
     $pythonArgs += "--verbose"
 }
 
-Write-Host "`nExecuting command:" -ForegroundColor Yellow
-Write-Host "python $($pythonArgs -join ' ')" -ForegroundColor Gray
-
 try {
     python @pythonArgs
     if ($LASTEXITCODE -eq 0) {
-        Write-Host "`nSuccessfully completed statistical feature training!" -ForegroundColor Green
-        Write-Host "Results saved to: $Output" -ForegroundColor Cyan
+        Write-Host "Successfully completed statistical feature training!" -ForegroundColor Green
+        Write-Host "Results saved to: $OutputDir" -ForegroundColor Cyan
         
-        # List generated files in current directory (plots are saved there)
-        Write-Host "`nGenerated files:" -ForegroundColor Yellow
-        $plotFiles = @(
-            "feature_importance_$DatasetName.png",
-            "predictions_$DatasetName.png"
-        )
-        
-        foreach ($file in $plotFiles) {
-            if (Test-Path $file) {
-                Write-Host "  - $file" -ForegroundColor Yellow
+        # List generated files
+        if (Test-Path $OutputDir) {
+            Write-Host "Generated files:" -ForegroundColor Yellow
+            Get-ChildItem $OutputDir -File | ForEach-Object { 
+                Write-Host "  - $($_.Name)" -ForegroundColor Yellow 
             }
         }
-        
-        Write-Host "`nTraining Summary:" -ForegroundColor Green
-        Write-Host "  - Trained on log(RUL) for optimal performance" -ForegroundColor White
-        Write-Host "  - Evaluated on actual RUL for interpretability" -ForegroundColor White
-        Write-Host "  - Used battery-level aggregated features" -ForegroundColor White
-        Write-Host "  - Selected top $NFeatures features with highest correlation" -ForegroundColor White
     }
     else {
         Write-Host "Error during training" -ForegroundColor Red
