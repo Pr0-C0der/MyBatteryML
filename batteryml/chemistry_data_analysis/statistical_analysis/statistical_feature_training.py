@@ -21,6 +21,7 @@ from sklearn.metrics import mean_squared_error, mean_absolute_error
 import xgboost as xgb
 import matplotlib.pyplot as plt
 import seaborn as sns
+from tqdm import tqdm
 
 # Import necessary modules from the parent package
 import sys
@@ -76,7 +77,8 @@ class StatisticalFeatureTrainer:
         
         all_cycle_data = []
         
-        for file_path in battery_files:
+        print(f"Processing {len(battery_files)} battery files...")
+        for file_path in tqdm(battery_files, desc="Extracting features", unit="battery"):
             try:
                 # Load battery data using BatteryData.load()
                 battery = BatteryData.load(file_path)
@@ -144,7 +146,8 @@ class StatisticalFeatureTrainer:
         
         correlations = []
         
-        for feature in feature_cols:
+        print(f"Calculating correlations for {len(feature_cols)} features...")
+        for feature in tqdm(feature_cols, desc="Calculating correlations", unit="feature"):
             # Calculate correlation between feature and RUL
             correlation = data[feature].corr(data['rul'])
             
@@ -232,10 +235,12 @@ class StatisticalFeatureTrainer:
             subsample=0.8,
             colsample_bytree=0.8,
             random_state=42,
-            n_jobs=-1
+            n_jobs=-1,
+            verbosity=1  # Enable progress output
         )
         
-        # Train the model
+        # Train the model with progress bar
+        print("Training XGBoost model (this may take a few minutes)...")
         self.model.fit(X_train, y_train)
         
         # Make predictions
@@ -380,33 +385,56 @@ class StatisticalFeatureTrainer:
         print(f"Starting statistical feature training for dataset: {dataset_name}")
         print("=" * 60)
         
-        # Load and extract features
-        data = self.load_and_extract_features(dataset_name, cycle_limit)
-        print(f"Loaded {len(data)} cycle records from {data['battery_id'].nunique()} batteries")
+        # Create progress bar for main steps
+        main_steps = [
+            "Loading and extracting features",
+            "Calculating RUL labels", 
+            "Calculating correlations",
+            "Selecting top features",
+            "Preparing training data",
+            "Training XGBoost model"
+        ]
         
-        # Calculate RUL labels
-        data_with_rul = self.calculate_rul_labels(data)
-        
-        # Calculate correlations
-        correlation_df = self.calculate_correlations(data_with_rul)
-        self.correlations = correlation_df
-        
-        # Select top features
-        self.feature_names = self.select_top_features(correlation_df, n_features)
-        
-        # Prepare training data
-        X, y = self.prepare_training_data(data_with_rul, self.feature_names)
-        
-        # Split data
-        X_train, X_test, y_train, y_test = train_test_split(
-            X, y, test_size=test_size, random_state=random_state
-        )
-        
-        print(f"Training set size: {X_train.shape[0]}")
-        print(f"Test set size: {X_test.shape[0]}")
-        
-        # Train model
-        metrics = self.train_model(X_train, y_train, X_test, y_test)
+        with tqdm(total=len(main_steps), desc="Training Pipeline", unit="step") as pbar:
+            # Load and extract features
+            pbar.set_description("Loading and extracting features")
+            data = self.load_and_extract_features(dataset_name, cycle_limit)
+            print(f"Loaded {len(data)} cycle records from {data['battery_id'].nunique()} batteries")
+            pbar.update(1)
+            
+            # Calculate RUL labels
+            pbar.set_description("Calculating RUL labels")
+            data_with_rul = self.calculate_rul_labels(data)
+            pbar.update(1)
+            
+            # Calculate correlations
+            pbar.set_description("Calculating correlations")
+            correlation_df = self.calculate_correlations(data_with_rul)
+            self.correlations = correlation_df
+            pbar.update(1)
+            
+            # Select top features
+            pbar.set_description("Selecting top features")
+            self.feature_names = self.select_top_features(correlation_df, n_features)
+            pbar.update(1)
+            
+            # Prepare training data
+            pbar.set_description("Preparing training data")
+            X, y = self.prepare_training_data(data_with_rul, self.feature_names)
+            
+            # Split data
+            X_train, X_test, y_train, y_test = train_test_split(
+                X, y, test_size=test_size, random_state=random_state
+            )
+            
+            print(f"Training set size: {X_train.shape[0]}")
+            print(f"Test set size: {X_test.shape[0]}")
+            pbar.update(1)
+            
+            # Train model
+            pbar.set_description("Training XGBoost model")
+            metrics = self.train_model(X_train, y_train, X_test, y_test)
+            pbar.update(1)
         
         # Print results
         print("\n" + "=" * 60)
@@ -470,12 +498,15 @@ def main():
         
         # Generate plots
         if trainer.model is not None:
+            print("Generating plots...")
+            
             # Feature importance plot
+            print("  - Creating feature importance plot...")
             importance_path = output_dir / f"feature_importance_{args.dataset_name}.png"
             trainer.plot_feature_importance(str(importance_path))
             
             # Predictions plot (need to reload test data)
-            print("Generating prediction plots...")
+            print("  - Creating predictions plot...")
             data = trainer.load_and_extract_features(args.dataset_name, args.cycle_limit)
             data_with_rul = trainer.calculate_rul_labels(data)
             X, y = trainer.prepare_training_data(data_with_rul, trainer.feature_names)
