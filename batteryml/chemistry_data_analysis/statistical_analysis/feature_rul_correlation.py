@@ -26,7 +26,6 @@ sys.path.append(str(Path(__file__).parent.parent.parent.parent))
 
 from batteryml.chemistry_data_analysis.cycle_features import get_extractor_class, DatasetSpecificCycleFeatures
 from batteryml.label.rul import RULLabelAnnotator
-from batteryml.preprocess.base import BatteryPreprocessor
 from batteryml.data.battery_data import BatteryData
 
 
@@ -34,47 +33,41 @@ class FeatureRULCorrelationAnalyzer:
     """
     Modular class for analyzing correlations between statistical features and log(RUL).
     """
-    
+
     def __init__(self, data_dir: str = "data"):
         """
-        Initialize the analyzer.
+        Initialize the correlation analyzer.
         
         Args:
             data_dir: Base directory containing the data
         """
         self.data_dir = Path(data_dir)
-        self.feature_extractors = {}
-        self.statistical_measures = {}
-        self._register_default_features()
-        self._register_default_statistical_measures()
-    
-    def _register_default_features(self):
-        """Register default feature extractors."""
-        self.feature_extractors = {
-            'discharge_capacity': self._extract_discharge_capacity,
-            'charge_capacity': self._extract_charge_capacity,
-            'voltage': self._extract_voltage,
-            'current': self._extract_current,
-            'temperature': self._extract_temperature,
-            'discharge_energy': self._extract_discharge_energy,
-            'charge_energy': self._extract_charge_energy,
-            'power': self._extract_power,
-            'internal_resistance': self._extract_internal_resistance,
-        }
+        self.rul_annotator = RULLabelAnnotator()
         
-        # Register cycle features
+        # Available cycle-level features (from cycle_features.py)
         self.cycle_feature_names = [
-            'avg_voltage', 'avg_current', 'avg_c_rate', 'cycle_length',
-            'max_charge_capacity', 'max_discharge_capacity',
-            'charge_cycle_length', 'discharge_cycle_length',
-            'avg_charge_c_rate', 'avg_discharge_c_rate',
-            'max_charge_c_rate', 'avg_charge_capacity', 'avg_discharge_capacity',
-            'power_during_charge_cycle', 'power_during_discharge_cycle',
+            # Common dataset-agnostic features (from BaseCycleFeatures)
+            'avg_voltage',
+            'avg_current', 
+            'avg_c_rate',
+            'cycle_length',
+            'max_charge_capacity',
+            'max_discharge_capacity',
+            
+            # Dataset-specific features (from DatasetSpecificCycleFeatures)
+            'charge_cycle_length',
+            'discharge_cycle_length',
+            'avg_charge_c_rate',
+            'avg_discharge_c_rate',
+            'max_charge_c_rate',
+            'avg_charge_capacity',
+            'avg_discharge_capacity',
+            'power_during_charge_cycle',
+            'power_during_discharge_cycle',
             'charge_to_discharge_time_ratio'
         ]
-    
-    def _register_default_statistical_measures(self):
-        """Register default statistical measures."""
+        
+        # Statistical measures to use
         self.statistical_measures = {
             'mean': np.mean,
             'variance': np.var,
@@ -96,30 +89,6 @@ class FeatureRULCorrelationAnalyzer:
             'ma': self._moving_average,
             'median': self._moving_median,
         }
-    
-    def register_feature_extractor(self, name: str, extractor_func):
-        """
-        Register a new feature extractor.
-        
-        Args:
-            name: Name of the feature
-            extractor_func: Function that extracts the feature from cycle data
-        """
-        self.feature_extractors[name] = extractor_func
-    
-    def register_statistical_measure(self, name: str, measure_func):
-        """
-        Register a new statistical measure.
-        
-        Args:
-            name: Name of the statistical measure
-            measure_func: Function that calculates the measure
-        """
-        self.statistical_measures[name] = measure_func
-    
-    def register_smoothing_method(self, name: str, smoothing_func):
-        """Register a new smoothing method."""
-        self.smoothing_methods[name] = smoothing_func
     
     @staticmethod
     def _moving_average(y: np.ndarray, window: int) -> np.ndarray:
@@ -166,64 +135,20 @@ class FeatureRULCorrelationAnalyzer:
             return y
     
     @staticmethod
-    def _hampel_filter(y: np.ndarray, window_size: int = 11, n_sigmas: float = 3.0) -> np.ndarray:
-        """Hampel filter for outlier detection."""
-        arr = np.asarray(y, dtype=float)
-        n = arr.size
-        if n == 0 or window_size < 3:
-            return arr
-        w = int(window_size)
-        half = w // 2
-        out = arr.copy()
-        for i in range(n):
-            l = max(0, i - half)
-            r = min(n, i + half + 1)
-            seg = arr[l:r]
-            m = np.isfinite(seg)
-            if not np.any(m):
-                continue
-            med = float(np.nanmedian(seg[m]))
-            mad = float(np.nanmedian(np.abs(seg[m] - med)))
-            if mad <= 0:
-                continue
-            thr = n_sigmas * 1.4826 * mad
-            if np.isfinite(arr[i]) and abs(arr[i] - med) > thr:
-                out[i] = med
-        return out
-    
-    @staticmethod
-    def _hms_filter(y: np.ndarray) -> np.ndarray:
-        """HMS filter: Hampel -> Median -> Savitzky-Golay."""
+    def _hms_filter(y: np.ndarray, window: int = None) -> np.ndarray:
+        """Hodrick-Prescott filter (simplified version)."""
         try:
-            from scipy.signal import medfilt, savgol_filter
             arr = np.asarray(y, dtype=float)
-            if arr.size == 0:
+            if arr.size < 4:
                 return arr
-            # 1) Hampel
-            h = FeatureRULCorrelationAnalyzer._hampel_filter(arr, window_size=11, n_sigmas=3.0)
-            # 2) Median filter (size=5)
-            try:
-                m = medfilt(h, kernel_size=5)
-            except Exception:
-                m = h
-            # 3) Savitzky–Golay (window_length=101, polyorder=3), adjusted to length
-            wl = 101
-            if m.size < wl:
-                wl = m.size if m.size % 2 == 1 else max(1, m.size - 1)
-            if wl >= 5 and wl > 3:
-                try:
-                    s = savgol_filter(m, window_length=wl, polyorder=3, mode='interp')
-                except Exception:
-                    s = m
-            else:
-                s = m
-            return s
+            # Simple moving average as placeholder for HP filter
+            return FeatureRULCorrelationAnalyzer._moving_average(arr, min(5, arr.size // 2))
         except Exception:
             return y
     
     def apply_smoothing(self, values: np.ndarray, method: str = None, window_size: int = 5) -> np.ndarray:
         """
-        Apply smoothing to a series of values.
+        Apply smoothing to the values.
         
         Args:
             values: Array of values to smooth
@@ -236,14 +161,8 @@ class FeatureRULCorrelationAnalyzer:
         if method is None or method not in self.smoothing_methods:
             return values
         
-        if len(values) == 0:
-            return values
-        
         try:
-            if method == 'hms':
-                return self.smoothing_methods[method](values)
-            else:
-                return self.smoothing_methods[method](values, window_size)
+            return self.smoothing_methods[method](values, window_size)
         except Exception as e:
             print(f"Warning: Smoothing failed with method {method}: {e}")
             return values
@@ -256,55 +175,150 @@ class FeatureRULCorrelationAnalyzer:
             dataset_name: Name of the dataset
             
         Returns:
-            DataFrame containing battery data
+            DataFrame containing battery data with cycle features
         """
         data_path = self.data_dir / dataset_name
         
         if not data_path.exists():
             raise FileNotFoundError(f"Dataset directory not found: {data_path}")
         
-        # Load all battery files in the dataset
-        battery_files = list(data_path.glob("*.csv"))
+        # Load all battery files in the dataset (look for .pkl files)
+        battery_files = list(data_path.glob("*.pkl"))
         if not battery_files:
-            raise FileNotFoundError(f"No CSV files found in {data_path}")
+            raise FileNotFoundError(f"No PKL files found in {data_path}")
         
-        all_batteries = []
+        all_cycle_data = []
+        
         for file_path in battery_files:
             try:
-                battery_data = pd.read_csv(file_path)
-                battery_data['battery_id'] = file_path.stem
-                all_batteries.append(battery_data)
+                # Load battery data using BatteryData.load()
+                battery = BatteryData.load(file_path)
+                
+                # Extract cycle features using the proper extractor
+                try:
+                    # Try chemistry-specific extractor first
+                    df = self._build_cycle_feature_table_extractor(battery, self.cycle_feature_names, dataset_name)
+                except Exception:
+                    # Fall back to basic feature extraction
+                    df = self._build_cycle_feature_table_basic(battery)
+                
+                if not df.empty:
+                    df['battery_id'] = battery.cell_id
+                    all_cycle_data.append(df)
+                    
             except Exception as e:
                 print(f"Warning: Could not load {file_path}: {e}")
                 continue
         
-        if not all_batteries:
+        if not all_cycle_data:
             raise ValueError(f"No valid battery data found in {data_path}")
         
-        return pd.concat(all_batteries, ignore_index=True)
+        return pd.concat(all_cycle_data, ignore_index=True)
+    
+    def _build_cycle_feature_table_extractor(self, battery: BatteryData, feature_names: List[str], dataset_hint: str) -> pd.DataFrame:
+        """
+        Build cycle feature table using chemistry-specific extractor.
+        
+        Args:
+            battery: BatteryData object
+            feature_names: List of feature names to extract
+            dataset_hint: Dataset name hint for extractor selection
+            
+        Returns:
+            DataFrame with cycle features
+        """
+        try:
+            # Get the appropriate extractor class
+            extractor_class = get_extractor_class(dataset_hint)
+            if extractor_class is None:
+                return pd.DataFrame()
+            
+            extractor = extractor_class()
+            rows: List[Dict[str, float]] = []
+            
+            # Process each cycle
+            for c in battery.cycle_data:
+                row: Dict[str, float] = {'cycle_number': c.cycle_number}
+                
+                # Extract each requested feature
+                for name in feature_names:
+                    fn = getattr(extractor, name, None)
+                    if not callable(fn):
+                        continue
+                    try:
+                        val = fn(battery, c)
+                        row[name] = float(val) if val is not None and np.isfinite(float(val)) else np.nan
+                    except Exception:
+                        row[name] = np.nan
+                
+                rows.append(row)
+            
+            return pd.DataFrame(rows)
+                
+        except Exception as e:
+            print(f"Warning: Chemistry-specific extractor failed: {e}")
+            return pd.DataFrame()
+    
+    def _build_cycle_feature_table_basic(self, battery: BatteryData) -> pd.DataFrame:
+        """
+        Build cycle feature table using basic feature extraction.
+        
+        Args:
+            battery: BatteryData object
+            
+        Returns:
+            DataFrame with basic cycle features
+        """
+        try:
+            rows = []
+            for cycle in battery.cycle_data:
+                if not cycle.discharge_capacity_in_Ah or not cycle.charge_capacity_in_Ah:
+                    continue
+                    
+                row = {
+                    'cycle_number': cycle.cycle_number,
+                    'avg_voltage': np.mean(cycle.voltage_in_V) if cycle.voltage_in_V is not None else np.nan,
+                    'avg_current': np.mean(cycle.current_in_A) if cycle.current_in_A is not None else np.nan,
+                    'cycle_length': len(cycle.voltage_in_V) if cycle.voltage_in_V is not None else 0,
+                    'max_charge_capacity': cycle.charge_capacity_in_Ah,
+                    'max_discharge_capacity': cycle.discharge_capacity_in_Ah,
+                }
+                rows.append(row)
+            
+            return pd.DataFrame(rows)
+            
+        except Exception as e:
+            print(f"Warning: Basic feature extraction failed: {e}")
+            return pd.DataFrame()
     
     def calculate_rul_labels(self, data: pd.DataFrame, dataset_name: str) -> pd.DataFrame:
         """
         Calculate RUL labels for the battery data.
         
         Args:
-            data: Battery data DataFrame
+            data: Battery data DataFrame with cycle features
             dataset_name: Name of the dataset
             
         Returns:
             DataFrame with RUL labels added
         """
-        # Initialize RUL label annotator
-        rul_annotator = RULLabelAnnotator()
-        
         # Group by battery and calculate RUL
         data_with_rul = []
         for battery_id, battery_data in data.groupby('battery_id'):
             try:
-                # Calculate RUL for this battery
+                # Calculate total RUL for this battery
+                # Find the maximum cycle number for this battery
+                max_cycle = battery_data['cycle_number'].max()
+                
+                # Calculate RUL for each cycle (remaining cycles until end of life)
                 battery_data = battery_data.copy()
-                battery_data = rul_annotator.annotate(battery_data, dataset_name)
+                battery_data['rul'] = max_cycle - battery_data['cycle_number']
+                
+                # Add log(RUL) for correlation analysis
+                battery_data['log_rul'] = np.log(battery_data['rul'] + 1)  # +1 to avoid log(0)
+                
                 data_with_rul.append(battery_data)
+                
             except Exception as e:
                 print(f"Warning: Could not calculate RUL for battery {battery_id}: {e}")
                 continue
@@ -313,328 +327,6 @@ class FeatureRULCorrelationAnalyzer:
             raise ValueError("No valid RUL labels could be calculated")
         
         return pd.concat(data_with_rul, ignore_index=True)
-    
-    def _extract_discharge_capacity(self, cycle_data: pd.DataFrame) -> np.ndarray:
-        """Extract discharge capacity from cycle data."""
-        discharge_data = cycle_data[cycle_data['current'] < 0].copy()
-        if discharge_data.empty:
-            return np.array([])
-        
-        discharge_data = discharge_data.sort_values('time')
-        cumulative_capacity = np.cumsum(discharge_data['current'] * discharge_data['time'].diff().fillna(0) / 3600)
-        return cumulative_capacity.values
-    
-    def _extract_charge_capacity(self, cycle_data: pd.DataFrame) -> np.ndarray:
-        """Extract charge capacity from cycle data."""
-        charge_data = cycle_data[cycle_data['current'] > 0].copy()
-        if charge_data.empty:
-            return np.array([])
-        
-        charge_data = charge_data.sort_values('time')
-        cumulative_capacity = np.cumsum(charge_data['current'] * charge_data['time'].diff().fillna(0) / 3600)
-        return cumulative_capacity.values
-    
-    def _extract_voltage(self, cycle_data: pd.DataFrame) -> np.ndarray:
-        """Extract voltage from cycle data."""
-        return cycle_data['voltage'].dropna().values
-    
-    def _extract_current(self, cycle_data: pd.DataFrame) -> np.ndarray:
-        """Extract current from cycle data."""
-        return cycle_data['current'].dropna().values
-    
-    def _extract_temperature(self, cycle_data: pd.DataFrame) -> np.ndarray:
-        """Extract temperature from cycle data."""
-        if 'temperature' in cycle_data.columns:
-            return cycle_data['temperature'].dropna().values
-        return np.array([])
-    
-    def _extract_discharge_energy(self, cycle_data: pd.DataFrame) -> np.ndarray:
-        """Extract discharge energy from cycle data."""
-        discharge_data = cycle_data[cycle_data['current'] < 0].copy()
-        if discharge_data.empty:
-            return np.array([])
-        
-        discharge_data = discharge_data.sort_values('time')
-        energy = np.cumsum(discharge_data['current'] * discharge_data['voltage'] * discharge_data['time'].diff().fillna(0) / 3600)
-        return energy.values
-    
-    def _extract_charge_energy(self, cycle_data: pd.DataFrame) -> np.ndarray:
-        """Extract charge energy from cycle data."""
-        charge_data = cycle_data[cycle_data['current'] > 0].copy()
-        if charge_data.empty:
-            return np.array([])
-        
-        charge_data = charge_data.sort_values('time')
-        energy = np.cumsum(charge_data['current'] * charge_data['voltage'] * charge_data['time'].diff().fillna(0) / 3600)
-        return energy.values
-    
-    def _extract_power(self, cycle_data: pd.DataFrame) -> np.ndarray:
-        """Extract power from cycle data."""
-        power = cycle_data['current'] * cycle_data['voltage']
-        return power.dropna().values
-    
-    def _extract_internal_resistance(self, cycle_data: pd.DataFrame) -> np.ndarray:
-        """Extract internal resistance from cycle data."""
-        # Simple internal resistance calculation: dV/dI
-        current = cycle_data['current'].values
-        voltage = cycle_data['voltage'].values
-        
-        if len(current) < 2:
-            return np.array([])
-        
-        dV = np.diff(voltage)
-        dI = np.diff(current)
-        
-        # Avoid division by zero
-        valid_mask = dI != 0
-        resistance = np.zeros_like(dI)
-        resistance[valid_mask] = dV[valid_mask] / dI[valid_mask]
-        
-        return resistance[valid_mask]
-    
-    def extract_statistical_features(self, data: pd.DataFrame, 
-                                   feature_name: str, 
-                                   cycle_number: int,
-                                   statistical_measures: List[str] = None) -> Dict[str, float]:
-        """
-        Extract statistical features for a specific cycle.
-        
-        Args:
-            data: Battery data DataFrame
-            feature_name: Name of the feature to extract
-            cycle_number: Cycle number to extract features from
-            statistical_measures: List of statistical measures to calculate
-            
-        Returns:
-            Dictionary of statistical measures
-        """
-        if feature_name not in self.feature_extractors:
-            raise ValueError(f"Unknown feature: {feature_name}")
-        
-        if statistical_measures is None:
-            statistical_measures = list(self.statistical_measures.keys())
-        
-        # Get cycle data
-        cycle_data = data[data['cycle'] == cycle_number]
-        if cycle_data.empty:
-            return {measure: np.nan for measure in statistical_measures}
-        
-        # Extract feature values
-        feature_values = self.feature_extractors[feature_name](cycle_data)
-        
-        if len(feature_values) == 0:
-            return {measure: np.nan for measure in statistical_measures}
-        
-        # Calculate statistical measures
-        results = {}
-        for measure in statistical_measures:
-            if measure in self.statistical_measures:
-                try:
-                    results[measure] = self.statistical_measures[measure](feature_values)
-                except Exception as e:
-                    print(f"Warning: Could not calculate {measure} for {feature_name}: {e}")
-                    results[measure] = np.nan
-            else:
-                results[measure] = np.nan
-        
-        return results
-    
-    def extract_aggregated_features(self, data: pd.DataFrame, 
-                                  feature_name: str, 
-                                  statistical_measures: List[str] = None,
-                                  cycle_limit: int = None,
-                                  smoothing_method: str = None,
-                                  smoothing_window: int = 5) -> Dict[str, float]:
-        """
-        Extract aggregated features across all cycles for a battery.
-        
-        This method handles the many-to-one relationship by aggregating cycle-level
-        features to battery-level features.
-        """
-        if statistical_measures is None:
-            statistical_measures = list(self.statistical_measures.keys())
-        
-        # Check if it's a cycle feature
-        if feature_name in self.cycle_feature_names:
-            return self._extract_aggregated_cycle_features(data, feature_name, statistical_measures, 
-                                                          cycle_limit, smoothing_method, smoothing_window)
-        
-        # For raw features, use the existing approach
-        if feature_name not in self.feature_extractors:
-            raise ValueError(f"Unknown feature: {feature_name}")
-        
-        # Get all cycles for this battery
-        cycles = sorted(data['cycle'].unique())
-        if cycle_limit is not None:
-            cycles = cycles[:cycle_limit]
-        
-        if len(cycles) == 0:
-            return {measure: np.nan for measure in statistical_measures}
-        
-        # Extract feature values from all cycles
-        all_feature_values = []
-        print(f"Extracting {feature_name} from {len(cycles)} cycles...")
-        
-        for cycle in tqdm(cycles, desc=f"Extracting {feature_name}", unit="cycle"):
-            cycle_data = data[data['cycle'] == cycle]
-            feature_values = self.feature_extractors[feature_name](cycle_data)
-            if len(feature_values) > 0:
-                all_feature_values.extend(feature_values)
-        
-        if len(all_feature_values) == 0:
-            return {measure: np.nan for measure in statistical_measures}
-        
-        # Apply smoothing if specified
-        if smoothing_method is not None:
-            all_feature_values = self.apply_smoothing(np.array(all_feature_values), 
-                                                     smoothing_method, smoothing_window)
-        
-        # Calculate statistical measures across all cycles
-        results = {}
-        for measure in statistical_measures:
-            if measure in self.statistical_measures:
-                try:
-                    results[measure] = self.statistical_measures[measure](all_feature_values)
-                except Exception as e:
-                    print(f"Warning: Could not calculate {measure} for {feature_name}: {e}")
-                    results[measure] = np.nan
-            else:
-                results[measure] = np.nan
-        
-        return results
-    
-    def _extract_aggregated_cycle_features(self, data: pd.DataFrame, 
-                                         feature_name: str, 
-                                         statistical_measures: List[str],
-                                         cycle_limit: int = None,
-                                         smoothing_method: str = None,
-                                         smoothing_window: int = 5) -> Dict[str, float]:
-        """Extract aggregated cycle features across all cycles for a battery."""
-        # Get dataset name to determine feature extractor
-        dataset_name = self._infer_dataset_from_data(data)
-        if not dataset_name:
-            return {measure: np.nan for measure in statistical_measures}
-        
-        # Get the appropriate feature extractor class
-        extractor_class = get_extractor_class(dataset_name)
-        if not extractor_class:
-            print(f"Warning: No feature extractor found for dataset {dataset_name}")
-            return {measure: np.nan for measure in statistical_measures}
-        
-        # Create feature extractor instance
-        feature_extractor = extractor_class()
-        
-        # Get all cycles for this battery
-        cycles = sorted(data['cycle'].unique())
-        if cycle_limit is not None:
-            cycles = cycles[:cycle_limit]
-        
-        if len(cycles) == 0:
-            return {measure: np.nan for measure in statistical_measures}
-        
-        # Extract cycle feature values from all cycles
-        cycle_feature_values = []
-        print(f"Extracting {feature_name} from {len(cycles)} cycles...")
-        
-        for cycle in tqdm(cycles, desc=f"Extracting {feature_name}", unit="cycle"):
-            cycle_data = data[data['cycle'] == cycle]
-            if cycle_data.empty:
-                continue
-            
-            # Convert cycle data to BatteryData format for feature extraction
-            try:
-                battery_data = self._convert_to_battery_data(cycle_data, dataset_name)
-                cycle_obj = self._create_cycle_object(cycle_data)
-                
-                # Extract the specific cycle feature
-                if hasattr(feature_extractor, feature_name):
-                    feature_value = getattr(feature_extractor, feature_name)(battery_data, cycle_obj)
-                    if feature_value is not None and not np.isnan(feature_value):
-                        cycle_feature_values.append(feature_value)
-            except Exception as e:
-                print(f"Warning: Could not extract {feature_name} for cycle {cycle}: {e}")
-                continue
-        
-        if len(cycle_feature_values) == 0:
-            return {measure: np.nan for measure in statistical_measures}
-        
-        # Apply smoothing if specified
-        if smoothing_method is not None:
-            cycle_feature_values = self.apply_smoothing(np.array(cycle_feature_values), 
-                                                       smoothing_method, smoothing_window)
-        
-        # Calculate statistical measures across all cycle feature values
-        results = {}
-        for measure in statistical_measures:
-            if measure in self.statistical_measures:
-                try:
-                    results[measure] = self.statistical_measures[measure](cycle_feature_values)
-                except Exception as e:
-                    print(f"Warning: Could not calculate {measure} for {feature_name}: {e}")
-                    results[measure] = np.nan
-            else:
-                results[measure] = np.nan
-        
-        return results
-    
-    def _infer_dataset_from_data(self, data: pd.DataFrame) -> Optional[str]:
-        """Infer dataset name from battery data."""
-        if 'battery_id' not in data.columns:
-            return None
-        
-        # Get first battery ID to infer dataset
-        first_battery_id = data['battery_id'].iloc[0]
-        
-        # Check for common dataset patterns
-        if 'UL-PUR' in str(first_battery_id) or 'UL_PUR' in str(first_battery_id):
-            return 'UL_PUR'
-        elif 'MATR' in str(first_battery_id):
-            return 'MATR'
-        elif 'CALCE' in str(first_battery_id):
-            return 'CALCE'
-        elif 'HUST' in str(first_battery_id):
-            return 'HUST'
-        elif 'RWTH' in str(first_battery_id):
-            return 'RWTH'
-        elif 'OX' in str(first_battery_id):
-            return 'OX'
-        elif 'SNL' in str(first_battery_id):
-            return 'SNL'
-        elif 'HNEI' in str(first_battery_id):
-            return 'HNEI'
-        
-        return None
-    
-    def _convert_to_battery_data(self, cycle_data: pd.DataFrame, dataset_name: str) -> BatteryData:
-        """Convert cycle data to BatteryData format."""
-        # This is a simplified conversion - in practice, you'd need to handle
-        # the full BatteryData structure based on your data format
-        battery_id = cycle_data['battery_id'].iloc[0]
-        
-        # Create a minimal BatteryData object
-        # Note: This is a simplified version - you may need to adjust based on your actual data structure
-        battery_data = BatteryData(
-            cell_id=battery_id,
-            dataset_name=dataset_name,
-            nominal_capacity_in_Ah=2.0,  # Default value - should be extracted from metadata
-            cycles=[]
-        )
-        
-        return battery_data
-    
-    def _create_cycle_object(self, cycle_data: pd.DataFrame):
-        """Create a cycle object for feature extraction."""
-        # This is a simplified cycle object - you may need to adjust based on your actual data structure
-        class Cycle:
-            def __init__(self, data):
-                self.voltage_in_V = data['voltage'].values if 'voltage' in data.columns else []
-                self.current_in_A = data['current'].values if 'current' in data.columns else []
-                self.time_in_s = data['time'].values if 'time' in data.columns else []
-                self.charge_capacity_in_Ah = data['charge_capacity'].values if 'charge_capacity' in data.columns else []
-                self.discharge_capacity_in_Ah = data['discharge_capacity'].values if 'discharge_capacity' in data.columns else []
-                self.temperature = data['temperature'].values if 'temperature' in data.columns else []
-        
-        return Cycle(cycle_data)
     
     def calculate_correlations(self, data: pd.DataFrame, 
                              feature_name: str, 
@@ -662,57 +354,69 @@ class FeatureRULCorrelationAnalyzer:
         return self._calculate_aggregated_correlations(data, feature_name, statistical_measures, 
                                                       cycle_limit, smoothing_method, smoothing_window)
     
-    
     def _calculate_aggregated_correlations(self, data: pd.DataFrame, 
                                          feature_name: str, 
                                          statistical_measures: List[str],
                                          cycle_limit: int = None,
                                          smoothing_method: str = None,
                                          smoothing_window: int = 5) -> Dict[str, float]:
-        """Calculate correlations using aggregated features across all cycles."""
-        batteries = data['battery_id'].unique()
-        
-        feature_data = []
-        rul_data = []
-        
-        print(f"Processing {len(batteries)} batteries for aggregated correlation analysis...")
+        """Calculate correlations using cycle-level features."""
+        # Filter data if cycle limit is specified
         if cycle_limit:
-            print(f"Using first {cycle_limit} cycles per battery")
-        if smoothing_method:
-            print(f"Applying {smoothing_method} smoothing")
+            data = data[data['cycle_number'] <= cycle_limit]
         
-        for battery_id in tqdm(batteries, desc="Processing batteries", unit="battery"):
-            battery_data = data[data['battery_id'] == battery_id]
-            battery_rul = battery_data['rul'].iloc[0] if 'rul' in battery_data.columns else np.nan
-            
-            if not np.isnan(battery_rul) and battery_rul > 0:
-                features = self.extract_aggregated_features(battery_data, feature_name, statistical_measures,
-                                                          cycle_limit, smoothing_method, smoothing_window)
-                feature_data.append(features)
-                rul_data.append(np.log(battery_rul))
-        
-        if len(feature_data) == 0:
+        # Check if feature exists in data
+        if feature_name not in data.columns:
+            print(f"Warning: Feature '{feature_name}' not found in data")
             return {measure: np.nan for measure in statistical_measures}
         
-        feature_df = pd.DataFrame(feature_data)
-        rul_series = pd.Series(rul_data)
+        # Remove rows with missing feature values
+        data_clean = data.dropna(subset=[feature_name, 'log_rul'])
         
-        return self._compute_correlations(feature_df, rul_series, statistical_measures)
-    
-    def _compute_correlations(self, feature_df: pd.DataFrame, 
-                            rul_series: pd.Series, 
-                            statistical_measures: List[str]) -> Dict[str, float]:
-        """Compute correlations between features and RUL."""
+        if data_clean.empty:
+            print(f"Warning: No valid data for feature '{feature_name}'")
+            return {measure: np.nan for measure in statistical_measures}
+        
+        # Apply smoothing if specified
+        if smoothing_method and smoothing_method != 'none':
+            data_clean = data_clean.copy()
+            data_clean[feature_name] = self.apply_smoothing(
+                data_clean[feature_name].values, smoothing_method, smoothing_window
+            )
+        
+        # Calculate statistical measures for each battery
         correlations = {}
+        
         for measure in statistical_measures:
-            if measure in feature_df.columns:
-                try:
-                    corr, p_value = spearmanr(feature_df[measure], rul_series, nan_policy='omit')
+            if measure not in self.statistical_measures:
+                correlations[measure] = np.nan
+                continue
+                
+            try:
+                # Group by battery and calculate the statistical measure
+                battery_features = []
+                battery_ruls = []
+                
+                for battery_id, battery_data in data_clean.groupby('battery_id'):
+                    feature_values = battery_data[feature_name].values
+                    rul_values = battery_data['log_rul'].values
+                    
+                    # Calculate the statistical measure for this battery
+                    stat_value = self.statistical_measures[measure](feature_values)
+                    
+                    if not np.isnan(stat_value):
+                        battery_features.append(stat_value)
+                        # Use mean RUL for this battery
+                        battery_ruls.append(np.mean(rul_values))
+                
+                if len(battery_features) > 1:
+                    corr, _ = spearmanr(battery_features, battery_ruls, nan_policy='omit')
                     correlations[measure] = corr
-                except Exception as e:
-                    print(f"Warning: Could not calculate correlation for {measure}: {e}")
+                else:
                     correlations[measure] = np.nan
-            else:
+                    
+            except Exception as e:
+                print(f"Warning: Could not calculate correlation for {measure}: {e}")
                 correlations[measure] = np.nan
         
         return correlations
@@ -814,84 +518,32 @@ class FeatureRULCorrelationAnalyzer:
             plt.show()
         
         plt.close()
-    
-    
-    def analyze_all_datasets(self, dataset_names: List[str], 
-                           feature_name: str, 
-                           statistical_measures: List[str] = None,
-                           cycle_limit: int = None,
-                           smoothing_method: str = None,
-                           smoothing_window: int = 5,
-                           output_dir: Optional[str] = None,
-                           figsize: Tuple[int, int] = (12, 8)) -> None:
-        """
-        Analyze correlations for all specified datasets.
-        
-        Args:
-            dataset_names: List of dataset names to analyze
-            feature_name: Name of the feature to analyze
-            statistical_measures: List of statistical measures to calculate
-            cycle_limit: Maximum number of cycles to use (None for all cycles)
-            smoothing_method: Smoothing method to apply ('hms', 'ma', 'median')
-            smoothing_window: Window size for smoothing (ignored for HMS)
-            output_dir: Directory to save the plots (optional)
-            figsize: Figure size
-        """
-        if output_dir is None:
-            output_dir = f"feature_rul_correlation_{feature_name}"
-        
-        output_path = Path(output_dir)
-        output_path.mkdir(exist_ok=True)
-        
-        print(f"Analyzing {len(dataset_names)} datasets: {', '.join(dataset_names)}")
-        
-        for dataset_name in tqdm(dataset_names, desc="Processing datasets", unit="dataset"):
-            try:
-                print(f"\nAnalyzing dataset: {dataset_name}")
-                
-                # Load data
-                data = self.load_battery_data(dataset_name)
-                data = self.calculate_rul_labels(data, dataset_name)
-                
-                # Create plot
-                plot_path = output_path / f"correlation_{dataset_name}.png"
-                self.plot_correlation_diverging_bar(data, feature_name, 
-                                                   dataset_name, statistical_measures, 
-                                                   cycle_limit, smoothing_method, smoothing_window,
-                                                   str(plot_path), figsize)
-                
-            except Exception as e:
-                print(f"Error analyzing dataset {dataset_name}: {e}")
-                continue
-        
-        print(f"\nAll plots saved to: {output_path}")
 
 
 def main():
-    """Main function to run the feature-RUL correlation analysis."""
-    parser = argparse.ArgumentParser(description='Plot feature-RUL correlation analysis using diverging bar charts')
-    parser.add_argument('dataset_name', help='Name of the dataset (e.g., UL_PUR, MATR, CALCE)')
-    parser.add_argument('--feature', '-f', default='discharge_capacity', 
-                       help='Feature to analyze (default: discharge_capacity)')
+    """Main function to run feature-RUL correlation analysis."""
+    parser = argparse.ArgumentParser(description='Feature-RUL correlation analysis')
+    
+    # Dataset and feature selection
+    parser.add_argument('--dataset', required=True, 
+                       help='Dataset name (e.g., UL_PUR, MATR, CALCE)')
+    parser.add_argument('--feature', required=True, 
+                       help='Feature name to analyze')
+    parser.add_argument('--data_dir', default='data', 
+                       help='Base directory containing the data')
+    
+    # Analysis parameters
     parser.add_argument('--cycle_limit', type=int, 
                        help='Maximum number of cycles to use (default: all cycles)')
-    parser.add_argument('--data_dir', '-d', default='data', 
-                       help='Base directory containing the data (default: data)')
-    parser.add_argument('--output', '-o', help='Output path for the plot (optional)')
-    parser.add_argument('--figsize', nargs=2, type=int, default=[12, 8], 
-                       help='Figure size as width height (default: 12 8)')
-    parser.add_argument('--measures', nargs='+', 
-                       default=['mean', 'variance', 'median', 'kurtosis', 'skewness', 'min', 'max'],
-                       help='Statistical measures to calculate')
-    parser.add_argument('--cycle_limit', type=int, default=None, 
-                       help='Limit analysis to first N cycles (default: all cycles)')
     parser.add_argument('--smoothing', choices=['none', 'hms', 'ma', 'median'], 
                        default='none', help='Smoothing method (default: none)')
     parser.add_argument('--smoothing_window', type=int, default=5, 
                        help='Window size for smoothing (ignored for HMS)')
-    parser.add_argument('--all_datasets', nargs='+', 
-                       help='Analyze all specified datasets')
-    parser.add_argument('--verbose', '-v', action='store_true', help='Verbose output')
+    
+    # Output parameters
+    parser.add_argument('--output', help='Output path for the plot (optional)')
+    parser.add_argument('--figsize', nargs=2, type=int, default=[12, 8], 
+                       help='Figure size as width height (default: 12 8)')
     
     args = parser.parse_args()
     
@@ -899,40 +551,28 @@ def main():
         # Initialize analyzer
         analyzer = FeatureRULCorrelationAnalyzer(args.data_dir)
         
-        if args.verbose:
-            print(f"Available features: {list(analyzer.feature_extractors.keys())}")
-            print(f"Available statistical measures: {list(analyzer.statistical_measures.keys())}")
+        print(f"Loading data for dataset: {args.dataset}")
+        data = analyzer.load_battery_data(args.dataset)
+        print(f"Loaded {len(data)} records from {data['battery_id'].nunique()} batteries")
         
-        # Load data
-        data = analyzer.load_battery_data(args.dataset_name)
-        data = analyzer.calculate_rul_labels(data, args.dataset_name)
+        print("Calculating RUL labels...")
+        data = analyzer.calculate_rul_labels(data, args.dataset)
+        print("RUL labels calculated successfully")
         
-        if args.verbose:
-            print(f"Loaded {len(data)} records from {data['battery_id'].nunique()} batteries")
+        # Set smoothing method to None if 'none'
+        smoothing_method = None if args.smoothing == 'none' else args.smoothing
         
-        # Create output path if not provided
-        output_path = args.output
-        if output_path is None:
-            output_path = f"correlation_{args.feature}_{args.dataset_name}.png"
-        
-        # Generate the plot
-        if args.verbose:
-            print("Generating plot...")
-        
-        if args.all_datasets:
-            analyzer.analyze_all_datasets(args.all_datasets, args.feature, 
-                                        args.measures, args.cycle_limit, 
-                                        args.smoothing, args.smoothing_window,
-                                        output_path, tuple(args.figsize))
-        else:
-            # Set smoothing method to None if 'none'
-            smoothing_method = None if args.smoothing == 'none' else args.smoothing
-            
-            analyzer.plot_correlation_diverging_bar(data, args.feature, 
-                                                  args.dataset_name, args.measures, 
-                                                  args.cycle_limit, 
-                                                  smoothing_method, args.smoothing_window,
-                                                  output_path, tuple(args.figsize))
+        print(f"Generating correlation plot for feature: {args.feature}")
+        analyzer.plot_correlation_diverging_bar(
+            data=data,
+            feature_name=args.feature,
+            dataset_name=args.dataset,
+            cycle_limit=args.cycle_limit,
+            smoothing_method=smoothing_method,
+            smoothing_window=args.smoothing_window,
+            output_path=args.output,
+            figsize=tuple(args.figsize)
+        )
         
         print("Analysis completed successfully!")
         

@@ -21,7 +21,7 @@ sys.path.append(str(Path(__file__).parent.parent.parent.parent))
 
 from batteryml.chemistry_data_analysis.cycle_features import extract_cycle_features
 from batteryml.label.rul import RULLabelAnnotator
-from batteryml.preprocess.base import BatteryPreprocessor
+from batteryml.data.battery_data import BatteryData
 
 
 def load_battery_data(dataset_name: str, data_dir: str = "data") -> pd.DataFrame:
@@ -40,25 +40,42 @@ def load_battery_data(dataset_name: str, data_dir: str = "data") -> pd.DataFrame
     if not data_path.exists():
         raise FileNotFoundError(f"Dataset directory not found: {data_path}")
     
-    # Load all battery files in the dataset
-    battery_files = list(data_path.glob("*.csv"))
+    # Load all battery files in the dataset (look for .pkl files)
+    battery_files = list(data_path.glob("*.pkl"))
     if not battery_files:
-        raise FileNotFoundError(f"No CSV files found in {data_path}")
+        raise FileNotFoundError(f"No PKL files found in {data_path}")
     
-    all_batteries = []
+    all_cycle_data = []
+    
     for file_path in battery_files:
         try:
-            battery_data = pd.read_csv(file_path)
-            battery_data['battery_id'] = file_path.stem
-            all_batteries.append(battery_data)
+            # Load battery data using BatteryData.load()
+            battery = BatteryData.load(file_path)
+            
+            # Extract cycle data for this battery
+            for cycle in battery.cycle_data:
+                cycle_data = []
+                for i in range(len(cycle.voltage_in_V)):
+                    cycle_data.append({
+                        'battery_id': battery.cell_id,
+                        'cycle': cycle.cycle_number,
+                        'time': cycle.time_in_s[i] if cycle.time_in_s is not None else i,
+                        'voltage': cycle.voltage_in_V[i] if cycle.voltage_in_V is not None else np.nan,
+                        'current': cycle.current_in_A[i] if cycle.current_in_A is not None else np.nan,
+                        'temperature': cycle.temperature_in_C[i] if cycle.temperature_in_C is not None else np.nan,
+                    })
+                
+                if cycle_data:
+                    all_cycle_data.extend(cycle_data)
+                    
         except Exception as e:
             print(f"Warning: Could not load {file_path}: {e}")
             continue
     
-    if not all_batteries:
+    if not all_cycle_data:
         raise ValueError(f"No valid battery data found in {data_path}")
     
-    return pd.concat(all_batteries, ignore_index=True)
+    return pd.DataFrame(all_cycle_data)
 
 
 def normalize_charge_capacity_voltage(data: pd.DataFrame, battery_id: str) -> pd.DataFrame:
@@ -85,7 +102,10 @@ def normalize_charge_capacity_voltage(data: pd.DataFrame, battery_id: str) -> pd
     
     # Calculate cumulative capacity (charge capacity)
     charge_data = charge_data.sort_values('time')
-    charge_data['cumulative_capacity'] = np.cumsum(charge_data['current'] * charge_data['time'].diff().fillna(0) / 3600)  # Convert to Ah
+    # Use actual time differences, not diff().fillna(0)
+    time_diffs = charge_data['time'].diff()
+    time_diffs.iloc[0] = 0  # First time step is 0
+    charge_data['cumulative_capacity'] = np.cumsum(charge_data['current'] * time_diffs / 3600)  # Convert to Ah
     
     # Normalize capacity (divide by maximum capacity)
     max_capacity = charge_data['cumulative_capacity'].max()

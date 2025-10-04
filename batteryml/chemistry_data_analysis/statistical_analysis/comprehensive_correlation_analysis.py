@@ -17,7 +17,7 @@ import warnings
 from tqdm import tqdm
 
 # Import the correlation analyzer
-from .feature_rul_correlation import FeatureRULCorrelationAnalyzer
+from feature_rul_correlation import FeatureRULCorrelationAnalyzer
 
 # Suppress warnings
 warnings.filterwarnings('ignore')

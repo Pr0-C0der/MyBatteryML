@@ -503,14 +503,14 @@ class ChemistryTrainer:
                 # Evaluate on test set if available
                 if X_test is not None and X_test.size > 0:
                     y_pred_t = est.predict(X_test)
-                    y_pred_t = np.asarray(y_pred_t, dtype=float)
-                    y_pred_t = np.nan_to_num(y_pred_t, nan=0.0, posinf=0.0, neginf=0.0)
-                    y_pred_t = np.clip(y_pred_t, a_min=-50.0, a_max=50.0)
-                    y_pred = _inverse_label_transform(y_pred_t, train_label_stats)
-                    rmse = mean_squared_error(y_test, y_pred) ** 0.5
-                    results[name] = rmse
-                    if self.verbose:
-                        print(f"Battery-level {name} RMSE: {rmse:.3f}")
+                        y_pred_t = np.asarray(y_pred_t, dtype=float)
+                        y_pred_t = np.nan_to_num(y_pred_t, nan=0.0, posinf=0.0, neginf=0.0)
+                        y_pred_t = np.clip(y_pred_t, a_min=-50.0, a_max=50.0)
+                        y_pred = _inverse_label_transform(y_pred_t, train_label_stats)
+                        rmse = mean_squared_error(y_test, y_pred) ** 0.5
+                        results[name] = rmse
+                        if self.verbose:
+                            print(f"Battery-level {name} RMSE: {rmse:.3f}")
                 else:
                     results[name] = 0.0  # No test set available
                 
@@ -698,14 +698,14 @@ class ChemistryTrainer:
                 # Evaluate on test set if available
                 if X_test is not None and X_test.size > 0:
                     y_pred_t = est.predict(X_test)
-                    y_pred_t = np.asarray(y_pred_t, dtype=float)
-                    y_pred_t = np.nan_to_num(y_pred_t, nan=0.0, posinf=0.0, neginf=0.0)
-                    y_pred_t = np.clip(y_pred_t, a_min=-50.0, a_max=50.0)
-                    y_pred = _inverse_label_transform(y_pred_t, train_label_stats)
-                    rmse = mean_squared_error(y_test, y_pred) ** 0.5
-                    results[name] = rmse
-                    if self.verbose:
-                        print(f"Cycle-level {name} RMSE: {rmse:.3f}")
+                        y_pred_t = np.asarray(y_pred_t, dtype=float)
+                        y_pred_t = np.nan_to_num(y_pred_t, nan=0.0, posinf=0.0, neginf=0.0)
+                        y_pred_t = np.clip(y_pred_t, a_min=-50.0, a_max=50.0)
+                        y_pred = _inverse_label_transform(y_pred_t, train_label_stats)
+                        rmse = mean_squared_error(y_test, y_pred) ** 0.5
+                        results[name] = rmse
+                        if self.verbose:
+                            print(f"Cycle-level {name} RMSE: {rmse:.3f}")
                 else:
                     results[name] = 0.0  # No test set available
                 

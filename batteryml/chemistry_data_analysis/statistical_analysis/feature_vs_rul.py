@@ -21,44 +21,51 @@ sys.path.append(str(Path(__file__).parent.parent.parent.parent))
 
 from batteryml.chemistry_data_analysis.cycle_features import extract_cycle_features
 from batteryml.label.rul import RULLabelAnnotator
-from batteryml.preprocess.base import BatteryPreprocessor
+from batteryml.data.battery_data import BatteryData
 
 
 def load_battery_data(dataset_name: str, data_dir: str = "data") -> pd.DataFrame:
     """
-    Load battery data for the specified dataset.
+    Load battery data for the specified dataset and extract cycle features.
     
     Args:
         dataset_name: Name of the dataset (e.g., 'UL_PUR', 'MATR', 'CALCE')
         data_dir: Base directory containing the data
         
     Returns:
-        DataFrame containing battery data
+        DataFrame containing battery data with cycle features
     """
     data_path = Path(data_dir) / dataset_name
     
     if not data_path.exists():
         raise FileNotFoundError(f"Dataset directory not found: {data_path}")
     
-    # Load all battery files in the dataset
-    battery_files = list(data_path.glob("*.csv"))
+    # Load all battery files in the dataset (look for .pkl files)
+    battery_files = list(data_path.glob("*.pkl"))
     if not battery_files:
-        raise FileNotFoundError(f"No CSV files found in {data_path}")
+        raise FileNotFoundError(f"No PKL files found in {data_path}")
     
-    all_batteries = []
+    all_cycle_data = []
+    
     for file_path in battery_files:
         try:
-            battery_data = pd.read_csv(file_path)
-            battery_data['battery_id'] = file_path.stem
-            all_batteries.append(battery_data)
+            # Load battery data using BatteryData.load()
+            battery = BatteryData.load(file_path)
+            
+            # Extract cycle features for this battery
+            cycle_features_df = extract_cycle_features(battery, dataset_name)
+            
+            if not cycle_features_df.empty:
+                all_cycle_data.append(cycle_features_df)
+                    
         except Exception as e:
             print(f"Warning: Could not load {file_path}: {e}")
             continue
     
-    if not all_batteries:
+    if not all_cycle_data:
         raise ValueError(f"No valid battery data found in {data_path}")
     
-    return pd.concat(all_batteries, ignore_index=True)
+    return pd.concat(all_cycle_data, ignore_index=True)
 
 
 def calculate_rul_labels(data: pd.DataFrame, dataset_name: str) -> pd.DataFrame:
@@ -72,25 +79,19 @@ def calculate_rul_labels(data: pd.DataFrame, dataset_name: str) -> pd.DataFrame:
     Returns:
         DataFrame with RUL labels added
     """
-    # Initialize RUL label annotator
-    rul_annotator = RULLabelAnnotator()
+    # Calculate RUL for each battery
+    data_with_rul = data.copy()
     
     # Group by battery and calculate RUL
-    data_with_rul = []
     for battery_id, battery_data in data.groupby('battery_id'):
-        try:
-            # Calculate RUL for this battery
-            battery_data = battery_data.copy()
-            battery_data = rul_annotator.annotate(battery_data, dataset_name)
-            data_with_rul.append(battery_data)
-        except Exception as e:
-            print(f"Warning: Could not calculate RUL for battery {battery_id}: {e}")
-            continue
+        # Get the maximum cycle number for this battery
+        max_cycle = battery_data['cycle'].max()
+        
+        # Calculate RUL as remaining cycles (max_cycle - current_cycle)
+        battery_mask = data_with_rul['battery_id'] == battery_id
+        data_with_rul.loc[battery_mask, 'rul'] = max_cycle - data_with_rul.loc[battery_mask, 'cycle']
     
-    if not data_with_rul:
-        raise ValueError("No valid RUL labels could be calculated")
-    
-    return pd.concat(data_with_rul, ignore_index=True)
+    return data_with_rul
 
 
 def find_battery_rul_stats(data: pd.DataFrame) -> Tuple[str, str, str]:
