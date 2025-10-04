@@ -14,7 +14,7 @@ param(
     [switch]$ChargeDischarge,
     [int]$WindowSize = 5,
     [switch]$NoSmoothing,
-    [switch]$Verbose
+    [switch]$VerboseOutput
 )
 
 # Set default output path if not provided
@@ -110,7 +110,7 @@ if ($NoSmoothing) {
     $pythonArgs += "--no_smoothing"
 }
 
-if ($Verbose) {
+if ($VerboseOutput) {
     $pythonArgs += "--verbose"
 }
 

@@ -12,7 +12,7 @@ param(
     [int]$Height = 8,
     [switch]$All,
     [switch]$Kde,
-    [switch]$Verbose
+    [switch]$VerboseOutput
 )
 
 # Set default output path if not provided
@@ -96,7 +96,7 @@ if ($Kde) {
     $pythonArgs += "--kde"
 }
 
-if ($Verbose) {
+if ($VerboseOutput) {
     $pythonArgs += "--verbose"
 }
 

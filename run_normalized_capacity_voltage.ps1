@@ -13,7 +13,7 @@ param(
     [switch]$MultipleBatteries,
     [int]$MaxBatteries = 3,
     [switch]$All,
-    [switch]$Verbose
+    [switch]$VerboseOutput
 )
 
 # Set default output path if not provided
@@ -86,7 +86,7 @@ elseif ($MultipleBatteries) {
     $pythonArgs += "--max_batteries", $MaxBatteries
 }
 
-if ($Verbose) {
+if ($VerboseOutput) {
     $pythonArgs += "--verbose"
 }
 

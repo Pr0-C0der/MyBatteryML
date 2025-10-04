@@ -4,6 +4,7 @@ from abc import ABC, abstractmethod
 from typing import Dict, Tuple, Type, Optional
 
 import numpy as np
+import pandas as pd
 
 from batteryml.data.battery_data import BatteryData
 
@@ -576,11 +577,57 @@ def get_extractor_class(dataset_name: str) -> Optional[Type[DatasetSpecificCycle
     return _DATASET_TO_CLASS.get(str(dataset_name).upper())
 
 
+def extract_cycle_features(battery: BatteryData, dataset_name: str) -> pd.DataFrame:
+    """
+    Extract cycle features for a battery using the appropriate dataset-specific extractor.
+    
+    Args:
+        battery: BatteryData object
+        dataset_name: Name of the dataset (e.g., 'MATR', 'CALCE', etc.)
+        
+    Returns:
+        DataFrame with cycle features
+    """
+    
+    # Get the appropriate extractor class
+    extractor_class = get_extractor_class(dataset_name)
+    if extractor_class is None:
+        # Fall back to base features if no dataset-specific extractor
+        extractor = BaseCycleFeatures()
+    else:
+        extractor = extractor_class()
+    
+    # Get all available feature methods
+    feature_methods = [method for method in dir(extractor) 
+                      if not method.startswith('_') and callable(getattr(extractor, method))]
+    
+    # Extract features for each cycle
+    rows = []
+    for cycle in battery.cycle_data:
+        row = {'battery_id': battery.cell_id, 'cycle': cycle.cycle_number}
+        
+        for method_name in feature_methods:
+            try:
+                method = getattr(extractor, method_name)
+                value = method(battery, cycle)
+                if value is not None and np.isfinite(float(value)):
+                    row[method_name] = float(value)
+                else:
+                    row[method_name] = np.nan
+            except Exception:
+                row[method_name] = np.nan
+        
+        rows.append(row)
+    
+    return pd.DataFrame(rows)
+
+
 __all__ = [
     'BaseCycleFeatures',
     'DatasetSpecificCycleFeatures',
     'MATRFeatures', 'CALCEFeatures', 'SNLFeatures', 'RWTHFeatures', 'HNEIFeatures', 'ULPURFeatures', 'HUSTFeatures', 'OXFeatures',
     'get_extractor_class',
+    'extract_cycle_features',
 ]
 
 
