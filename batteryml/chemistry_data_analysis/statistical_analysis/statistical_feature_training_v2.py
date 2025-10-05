@@ -14,12 +14,53 @@ import argparse
 from pathlib import Path
 from typing import List, Tuple, Dict, Optional
 import warnings
-from sklearn.model_selection import train_test_split
+from sklearn.model_selection import train_test_split, GroupKFold, ParameterGrid
 from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
-import xgboost as xgb
+from sklearn.pipeline import Pipeline
+from sklearn.impute import SimpleImputer
+from sklearn.preprocessing import StandardScaler
+from sklearn.base import clone
+from sklearn.linear_model import LinearRegression, Ridge, ElasticNet
+from sklearn.cross_decomposition import PLSRegression
+from sklearn.decomposition import PCA
+from sklearn.svm import SVR
+from sklearn.ensemble import RandomForestRegressor
+from sklearn.neural_network import MLPRegressor
 import matplotlib.pyplot as plt
 import seaborn as sns
 from tqdm import tqdm
+from scipy.signal import medfilt, savgol_filter
+
+# Optional imports for advanced models
+try:
+    from xgboost import XGBRegressor
+    _HAS_XGB = True
+except Exception:
+    _HAS_XGB = False
+
+try:
+    import torch
+    import torch.nn as nn
+    from torch.utils.data import DataLoader, TensorDataset
+    from batteryml.models.rul_predictors.cnn import CNNRULPredictor
+    from batteryml.models.rul_predictors.lstm import LSTMRULPredictor
+    from batteryml.models.rul_predictors.transformer import TransformerRULPredictor
+    _HAS_TORCH = True
+except Exception:
+    _HAS_TORCH = False
+
+try:
+    import cuml  # noqa: F401
+    _HAS_CUML = True
+except Exception:
+    _HAS_CUML = False
+
+try:
+    import torch  # noqa: F401
+    import gpytorch  # noqa: F401
+    _HAS_GPYTORCH = True
+except Exception:
+    _HAS_GPYTORCH = False
 
 # Import the working correlation analyzer
 from feature_rul_correlation import FeatureRULCorrelationAnalyzer
@@ -46,6 +87,117 @@ class StatisticalFeatureTrainerV2:
         
         # Statistical measures to calculate (same as working correlation analysis)
         self.statistical_measures = ['mean', 'std', 'min', 'max', 'median', 'q25', 'q75']
+    
+    @staticmethod
+    def _moving_average(y: np.ndarray, window: int) -> np.ndarray:
+        """Moving average smoothing."""
+        try:
+            arr = np.asarray(y, dtype=float)
+            if window is None or int(window) <= 1 or arr.size == 0:
+                return arr
+            w = max(1, int(window))
+            # rolling mean
+            result = np.full_like(arr, np.nan)
+            for i in range(arr.size):
+                start = max(0, i - w + 1)
+                end = i + 1
+                segment = arr[start:end]
+                if np.any(np.isfinite(segment)):
+                    result[i] = np.nanmean(segment)
+            return result
+        except Exception:
+            return y
+    
+    @staticmethod
+    def _moving_median(y: np.ndarray, window: int) -> np.ndarray:
+        """Moving median smoothing."""
+        try:
+            arr = np.asarray(y, dtype=float)
+            if window is None or int(window) <= 1 or arr.size == 0:
+                return arr
+            w = max(1, int(window))
+            return medfilt(arr, kernel_size=min(w, arr.size))
+        except Exception:
+            return y
+    
+    @staticmethod
+    def _hms_filter(y: np.ndarray, window: int) -> np.ndarray:
+        """HMS filter: Hampel -> Median -> Savitzky-Golay."""
+        try:
+            arr = np.asarray(y, dtype=float)
+            if arr.size == 0:
+                return arr
+            
+            # 1) Hampel filter
+            window_size = 11
+            n_sigmas = 3.0
+            half = window_size // 2
+            col_h = arr.copy()
+            for i in range(arr.size):
+                l = max(0, i - half)
+                r = min(arr.size, i + half + 1)
+                seg = arr[l:r]
+                fin = np.isfinite(seg)
+                if not np.any(fin):
+                    continue
+                med = float(np.nanmedian(seg[fin]))
+                mad = float(np.nanmedian(np.abs(seg[fin] - med)))
+                if mad <= 0:
+                    continue
+                thr = n_sigmas * 1.4826 * mad
+                if np.isfinite(arr[i]) and abs(arr[i] - med) > thr:
+                    col_h[i] = med
+            
+            # 2) Median filter
+            try:
+                col_m = medfilt(col_h, kernel_size=5)
+            except Exception:
+                col_m = col_h
+            
+            # 3) Savitzky-Golay
+            try:
+                wl = 101
+                if col_m.size < wl:
+                    wl = col_m.size if col_m.size % 2 == 1 else max(1, col_m.size - 1)
+                if wl >= 5:
+                    col_s = savgol_filter(col_m, window_length=wl, polyorder=3, mode='interp')
+                else:
+                    col_s = col_m
+            except Exception:
+                col_s = col_m
+            
+            return col_s
+        except Exception:
+            return y
+    
+    def apply_smoothing(self, values: np.ndarray, method: str = None, window_size: int = 5) -> np.ndarray:
+        """
+        Apply smoothing to the values.
+        
+        Args:
+            values: Input values
+            method: Smoothing method ('hms', 'moving_mean', 'moving_median')
+            window_size: Window size for smoothing (ignored for HMS)
+            
+        Returns:
+            Smoothed values
+        """
+        if method is None or method.lower() == 'none':
+            return values
+        
+        try:
+            if method == 'moving_mean':
+                return self._moving_average(values, window_size)
+            elif method == 'moving_median':
+                return self._moving_median(values, window_size)
+            elif method == 'hms':
+                return self._hms_filter(values, window_size)
+            else:
+                print(f"Warning: Unknown smoothing method '{method}', returning original values")
+                return values
+        except Exception as e:
+            print(f"Warning: Smoothing failed with method {method}: {e}")
+            return values
         
     def load_and_prepare_data(self, dataset_name: str, cycle_limit: Optional[int] = None) -> pd.DataFrame:
         """
@@ -77,12 +229,14 @@ class StatisticalFeatureTrainerV2:
         
         return data_with_rul
     
-    def calculate_statistical_features(self, data: pd.DataFrame) -> pd.DataFrame:
+    def calculate_statistical_features(self, data: pd.DataFrame, smoothing_method: str = None, smoothing_window: int = 5) -> pd.DataFrame:
         """
         Calculate statistical features for each battery using the working correlation method.
         
         Args:
             data: DataFrame with cycle features and RUL labels
+            smoothing_method: Smoothing method to apply ('hms', 'moving_mean', 'moving_median')
+            smoothing_window: Window size for smoothing (ignored for HMS)
             
         Returns:
             DataFrame with statistical features (one row per battery)
@@ -94,11 +248,16 @@ class StatisticalFeatureTrainerV2:
                        if col not in ['battery_id', 'cycle_number', 'log_rul', 'rul']]
         
         print(f"Processing {len(feature_cols)} features with {len(self.statistical_measures)} statistical measures")
+        if smoothing_method and smoothing_method != 'none':
+            print(f"Applying smoothing: {smoothing_method} (window={smoothing_window})")
         
         battery_stats = []
         
         for battery_id, battery_data in tqdm(data.groupby('battery_id'), desc="Processing batteries", unit="battery", leave=True):
             try:
+                # Sort by cycle number for proper smoothing
+                battery_data = battery_data.sort_values('cycle_number').reset_index(drop=True)
+                
                 # Calculate statistical measures for each feature
                 battery_row = {'battery_id': battery_id}
                 
@@ -106,6 +265,10 @@ class StatisticalFeatureTrainerV2:
                     feature_values = battery_data[feature].dropna().values
                     
                     if len(feature_values) > 0:
+                        # Apply smoothing if specified
+                        if smoothing_method and smoothing_method != 'none':
+                            feature_values = self.apply_smoothing(feature_values, smoothing_method, smoothing_window)
+                        
                         for measure in self.statistical_measures:
                             stat_value = self._calculate_statistical_measure(feature_values, measure)
                             battery_row[f"{feature}_{measure}"] = stat_value
@@ -133,6 +296,144 @@ class StatisticalFeatureTrainerV2:
         print(f"Output shape: {result.shape}")
         
         return result
+    
+    def _build_models(self, use_gpu: bool = False) -> Dict[str, Pipeline]:
+        """Build all available models for training."""
+        models: Dict[str, Pipeline] = {}
+        base_steps = [('imputer', SimpleImputer(strategy='constant', fill_value=0.0)), ('scaler', StandardScaler())]
+
+        # Determine if GPU is truly available
+        gpu_available = False
+        if use_gpu:
+            try:
+                import torch  # type: ignore
+                gpu_available = bool(getattr(torch, 'cuda', None) and torch.cuda.is_available())
+            except Exception:
+                gpu_available = False
+
+        # Prefer cuML implementations only when GPU is available
+        if gpu_available and _HAS_CUML:
+            from cuml.linear_model import LinearRegression as cuLinearRegression, Ridge as cuRidge, ElasticNet as cuElasticNet
+            from cuml.svm import SVR as cuSVR
+            from cuml.ensemble import RandomForestRegressor as cuRF
+            models['linear_regression'] = Pipeline(base_steps + [('model', cuLinearRegression())])
+            models['ridge'] = Pipeline(base_steps + [('model', cuRidge())])
+            models['elastic_net'] = Pipeline(base_steps + [('model', cuElasticNet())])
+            models['svr'] = Pipeline(base_steps + [('model', cuSVR(kernel='rbf', C=10.0))])
+            models['random_forest'] = Pipeline(base_steps + [('model', cuRF(n_estimators=40, random_state=42))])
+        else:
+            # Linear models (CPU)
+            models['linear_regression'] = Pipeline(base_steps + [('model', LinearRegression())])
+            models['ridge'] = Pipeline(base_steps + [('model', Ridge(alpha=1.0))])
+            models['elastic_net'] = Pipeline(base_steps + [('model', ElasticNet(alpha=0.001, l1_ratio=0.5, max_iter=10000))])
+            # Kernel (CPU)
+            models['svr'] = Pipeline(base_steps + [('model', SVR(kernel='rbf', C=10.0, gamma='scale'))])
+            # Trees (CPU)
+            models['random_forest'] = Pipeline(base_steps + [('model', RandomForestRegressor(n_estimators=40, random_state=42, n_jobs=-1))])
+        
+        # Shallow MLP
+        models['mlp'] = Pipeline(base_steps + [('model', MLPRegressor(hidden_layer_sizes=(128, 64), activation='relu', batch_size=256, max_iter=300, random_state=42))])
+        
+        # XGBoost
+        if _HAS_XGB:
+            xgb_device = 'cuda' if gpu_available else 'cpu'
+            models['xgboost'] = Pipeline(base_steps + [('model', XGBRegressor(
+                n_estimators=600,
+                max_depth=6,
+                learning_rate=0.05,
+                subsample=0.9,
+                colsample_bytree=0.9,
+                random_state=42,
+                n_jobs=-1,
+                tree_method='hist',
+                device=xgb_device
+            ))])
+        
+        # PLSR
+        models['plsr'] = Pipeline(base_steps + [('model', PLSRegression(n_components=10))])
+        
+        # PCR (PCA + Linear)
+        models['pcr'] = Pipeline(base_steps + [('model', Pipeline([('pca', PCA(n_components=20)), ('lr', LinearRegression())]))])
+
+        # Optional: GPyTorch SVGP (GPU scalable GP)
+        if gpu_available and _HAS_GPYTORCH:
+            class _SVGPRegressor:
+                def __init__(self, inducing_points: int = 1024, batch_size: int = 2048, iters: int = 1500, lr: float = 1e-2):
+                    self.m = int(inducing_points)
+                    self.batch = int(batch_size)
+                    self.iters = int(iters)
+                    self.lr = float(lr)
+                    self._predict_fn = None
+
+                def fit(self, X, y):
+                    import torch
+                    import gpytorch
+                    from torch.utils.data import TensorDataset, DataLoader
+
+                    device = 'cuda' if torch.cuda.is_available() else 'cpu'
+                    X_t = torch.tensor(X, dtype=torch.float32, device=device)
+                    y_t = torch.tensor(y, dtype=torch.float32, device=device)
+                    y_mean = y_t.mean(); y_std = y_t.std().clamp_min(1e-6)
+                    y_n = (y_t - y_mean) / y_std
+
+                    class GPModel(gpytorch.models.ApproximateGP):
+                        def __init__(self, inducing, d):
+                            var = gpytorch.variational.VariationalStrategy(
+                                self,
+                                inducing,
+                                gpytorch.variational.CholeskyVariationalDistribution(inducing.size(0)),
+                                learn_inducing_locations=True,
+                            )
+                            super().__init__(var)
+                            self.mean_module = gpytorch.means.ConstantMean()
+                            self.covar_module = gpytorch.kernels.ScaleKernel(
+                                gpytorch.kernels.RBFKernel(ard_num_dims=d)
+                            )
+
+                        def forward(self, x):
+                            mean_x = self.mean_module(x)
+                            covar_x = self.covar_module(x)
+                            return gpytorch.distributions.MultivariateNormal(mean_x, covar_x)
+
+                    m = min(self.m, X_t.shape[0])
+                    inducing = X_t[torch.randperm(X_t.shape[0])[:m]].contiguous()
+                    model = GPModel(inducing, X_t.shape[1]).to(device)
+                    likelihood = gpytorch.likelihoods.GaussianLikelihood().to(device)
+                    model.train(); likelihood.train()
+                    opt = torch.optim.Adam([
+                        {'params': model.parameters()},
+                        {'params': likelihood.parameters()}
+                    ], lr=self.lr)
+                    mll = gpytorch.mlls.VariationalELBO(likelihood, model, num_data=X_t.shape[0])
+
+                    loader = DataLoader(TensorDataset(X_t, y_n), batch_size=self.batch, shuffle=True, drop_last=False)
+                    for _ in tqdm(range(self.iters), desc='SVGP epochs', leave=False):
+                        for xb, yb in tqdm(loader, desc='SVGP batches', leave=False):
+                            opt.zero_grad(set_to_none=True)
+                            out = model(xb)
+                            loss = -mll(out, yb)
+                            loss.backward()
+                            opt.step()
+
+                    model.eval(); likelihood.eval()
+
+                    def _predict(Xtest):
+                        Xt = torch.tensor(Xtest, dtype=torch.float32, device=device)
+                        with torch.no_grad(), gpytorch.settings.fast_pred_var():
+                            mean = likelihood(model(Xt)).mean
+                        return (mean * y_std + y_mean).detach().cpu().numpy()
+
+                    self._predict_fn = _predict
+                    return self
+
+                def predict(self, X):
+                    if self._predict_fn is None:
+                        raise RuntimeError('SVGP model not fitted')
+                    return self._predict_fn(X)
+
+            models['gpytorch_svgp'] = Pipeline(base_steps + [('model', _SVGPRegressor())])
+
+        return models
     
     def _calculate_statistical_measure(self, values: np.ndarray, measure: str) -> float:
         """Calculate a statistical measure for given values."""
@@ -269,115 +570,222 @@ class StatisticalFeatureTrainerV2:
         
         return X, y
     
-    def train_model(self, X_train: np.ndarray, y_train: np.ndarray, 
-                   X_test: np.ndarray, y_test: np.ndarray) -> Dict[str, float]:
+    def train_models(self, X_train: np.ndarray, y_train: np.ndarray, 
+                    X_test: np.ndarray, y_test: np.ndarray, 
+                    use_gpu: bool = False, tune: bool = False, 
+                    cv_splits: int = 5) -> Dict[str, Dict[str, float]]:
         """
-        Train XGBoost model and evaluate performance.
+        Train multiple models and evaluate them.
         
         Args:
             X_train: Training features
-            y_train: Training targets (log RUL)
-            X_test: Test features
-            y_test: Test targets (log RUL)
+            y_train: Training labels (log RUL)
+            X_test: Test features  
+            y_test: Test labels (log RUL)
+            use_gpu: Whether to use GPU acceleration
+            tune: Whether to perform hyperparameter tuning
+            cv_splits: Number of cross-validation splits for tuning
             
         Returns:
-            Dictionary with evaluation metrics
+            Dictionary with evaluation metrics for each model
         """
-        print("Training XGBoost model...")
+        print("Training multiple models...")
         
-        # Initialize XGBoost regressor
-        self.model = xgb.XGBRegressor(
-            n_estimators=100,
-            max_depth=6,
-            learning_rate=0.1,
-            subsample=0.8,
-            colsample_bytree=0.8,
-            random_state=42,
-            n_jobs=-1,
-            verbosity=1
-        )
+        # Build all available models
+        models = self._build_models(use_gpu=use_gpu)
         
-        # Train the model
-        self.model.fit(X_train, y_train)
+        # Convert labels to actual RUL for evaluation
+        y_train_actual = np.exp(y_train) - 1
+        y_test_actual = np.exp(y_test) - 1
         
-        # Make predictions
-        y_train_pred = self.model.predict(X_train)
-        y_test_pred = self.model.predict(X_test)
+        results = {}
         
-        # Convert to actual RUL for evaluation
-        y_train_actual = np.exp(y_train)
-        y_test_actual = np.exp(y_test)
-        y_train_pred_actual = np.exp(y_train_pred)
-        y_test_pred_actual = np.exp(y_test_pred)
+        for name, pipe in tqdm(models.items(), desc="Training models", unit="model", leave=True):
+            print(f"\nTraining {name}...")
+            
+            try:
+                # Hyperparameter tuning if requested
+                best_params = None
+                if tune:
+                    best_params = self._tune_hyperparameters(pipe, name, X_train, y_train, cv_splits)
+                    if best_params:
+                        pipe = clone(pipe).set_params(**best_params)
+                
+                # Train model
+                pipe.fit(X_train, y_train)
+                
+                # Make predictions
+                y_train_pred = pipe.predict(X_train)
+                y_test_pred = pipe.predict(X_test)
+                
+                # Convert predictions back to actual RUL
+                y_train_pred_actual = np.exp(y_train_pred) - 1
+                y_test_pred_actual = np.exp(y_test_pred) - 1
+                
+                # Calculate metrics
+                train_rmse = np.sqrt(mean_squared_error(y_train_actual, y_train_pred_actual))
+                test_rmse = np.sqrt(mean_squared_error(y_test_actual, y_test_pred_actual))
+                train_mae = mean_absolute_error(y_train_actual, y_train_pred_actual)
+                test_mae = mean_absolute_error(y_test_actual, y_test_pred_actual)
+                train_mape = np.mean(np.abs((y_train_actual - y_train_pred_actual) / y_train_actual)) * 100
+                test_mape = np.mean(np.abs((y_test_actual - y_test_pred_actual) / y_test_actual)) * 100
+                train_r2 = r2_score(y_train_actual, y_train_pred_actual)
+                test_r2 = r2_score(y_test_actual, y_test_pred_actual)
+                
+                # Store results
+                results[name] = {
+                    'train_rmse': train_rmse,
+                    'test_rmse': test_rmse,
+                    'train_mae': train_mae,
+                    'test_mae': test_mae,
+                    'train_mape': train_mape,
+                    'test_mape': test_mape,
+                    'train_r2': train_r2,
+                    'test_r2': test_r2,
+                    'y_test_actual': y_test_actual,
+                    'y_test_pred_actual': y_test_pred_actual
+                }
+                
+                print(f"  {name}: Test RMSE={test_rmse:.2f}, Test MAE={test_mae:.2f}, Test R²={test_r2:.3f}")
+                
+            except Exception as e:
+                print(f"  {name}: Failed - {e}")
+                results[name] = {
+                    'train_rmse': np.inf,
+                    'test_rmse': np.inf,
+                    'train_mae': np.inf,
+                    'test_mae': np.inf,
+                    'train_mape': np.inf,
+                    'test_mape': np.inf,
+                    'train_r2': -np.inf,
+                    'test_r2': -np.inf,
+                    'y_test_actual': y_test_actual,
+                    'y_test_pred_actual': np.zeros_like(y_test_actual)
+                }
         
-        # Calculate metrics
-        train_rmse = np.sqrt(mean_squared_error(y_train_actual, y_train_pred_actual))
-        test_rmse = np.sqrt(mean_squared_error(y_test_actual, y_test_pred_actual))
+        # Print summary
+        print("\n" + "="*80)
+        print("MODEL COMPARISON SUMMARY")
+        print("="*80)
+        print(f"{'Model':<20} {'Test RMSE':<12} {'Test MAE':<12} {'Test R²':<10}")
+        print("-" * 80)
         
-        train_mae = mean_absolute_error(y_train_actual, y_train_pred_actual)
-        test_mae = mean_absolute_error(y_test_actual, y_test_pred_actual)
+        # Sort by test RMSE
+        sorted_results = sorted(results.items(), key=lambda x: x[1]['test_rmse'])
+        for name, metrics in sorted_results:
+            if metrics['test_rmse'] != np.inf:
+                print(f"{name:<20} {metrics['test_rmse']:<12.2f} {metrics['test_mae']:<12.2f} {metrics['test_r2']:<10.3f}")
+            else:
+                print(f"{name:<20} {'FAILED':<12} {'FAILED':<12} {'FAILED':<10}")
         
-        train_mape = np.mean(np.abs((y_train_actual - y_train_pred_actual) / y_train_actual)) * 100
-        test_mape = np.mean(np.abs((y_test_actual - y_test_pred_actual) / y_test_actual)) * 100
+        print("="*80)
         
-        train_r2 = r2_score(y_train_actual, y_train_pred_actual)
-        test_r2 = r2_score(y_test_actual, y_test_pred_actual)
+        # Store best model
+        if sorted_results and sorted_results[0][1]['test_rmse'] != np.inf:
+            best_name = sorted_results[0][0]
+            self.model = models[best_name]
+            print(f"\nBest model: {best_name}")
         
-        # Print results
-        print("\n" + "="*60)
-        print("EVALUATION RESULTS (on actual RUL)")
-        print("="*60)
-        print(f"Training RMSE: {train_rmse:.2f} cycles")
-        print(f"Test RMSE:     {test_rmse:.2f} cycles")
-        print(f"Training MAE:  {train_mae:.2f} cycles")
-        print(f"Test MAE:      {test_mae:.2f} cycles")
-        print(f"Training MAPE: {train_mape:.2f}%")
-        print(f"Test MAPE:     {test_mape:.2f}%")
-        print(f"Training R²:   {train_r2:.3f}")
-        print(f"Test R²:       {test_r2:.3f}")
-        print("="*60)
-        
-        # Print sample predictions vs actual values
-        print("\nSAMPLE PREDICTIONS (Test Set):")
-        print("-" * 60)
-        print(f"{'Index':<6} {'Actual RUL':<12} {'Predicted RUL':<15} {'Error':<10} {'Error %':<10}")
-        print("-" * 60)
-        
-        # Show first 10 predictions
-        n_samples = min(10, len(y_test_actual))
-        for i in range(n_samples):
-            actual = y_test_actual[i]
-            predicted = y_test_pred_actual[i]
-            error = predicted - actual
-            error_pct = (error / actual) * 100 if actual != 0 else 0
-            print(f"{i:<6} {actual:<12.1f} {predicted:<15.1f} {error:<10.1f} {error_pct:<10.1f}%")
-        
-        if len(y_test_actual) > 10:
-            print(f"... and {len(y_test_actual) - 10} more samples")
-        
-        # Print summary statistics
-        print("\nPREDICTION SUMMARY:")
-        print("-" * 40)
-        print(f"Actual RUL range:     {y_test_actual.min():.1f} - {y_test_actual.max():.1f} cycles")
-        print(f"Predicted RUL range:  {y_test_pred_actual.min():.1f} - {y_test_pred_actual.max():.1f} cycles")
-        print(f"Mean actual RUL:      {y_test_actual.mean():.1f} cycles")
-        print(f"Mean predicted RUL:   {y_test_pred_actual.mean():.1f} cycles")
-        print(f"Mean absolute error:  {np.mean(np.abs(y_test_actual - y_test_pred_actual)):.1f} cycles")
-        print(f"Max absolute error:   {np.max(np.abs(y_test_actual - y_test_pred_actual)):.1f} cycles")
-        print("="*60)
-        
-        return {
-            'train_rmse': train_rmse,
-            'test_rmse': test_rmse,
-            'train_mae': train_mae,
-            'test_mae': test_mae,
-            'train_mape': train_mape,
-            'test_mape': test_mape,
-            'train_r2': train_r2,
-            'test_r2': test_r2,
-            'y_test_actual': y_test_actual,
-            'y_test_pred_actual': y_test_pred_actual
+        return results
+    
+    def _tune_hyperparameters(self, pipe: Pipeline, name: str, X_train: np.ndarray, 
+                             y_train: np.ndarray, cv_splits: int) -> Optional[Dict]:
+        """Tune hyperparameters for a model using cross-validation."""
+        param_grids = {
+            'linear_regression': {
+                'model__fit_intercept': [True, False]
+            },
+            'ridge': {
+                'model__alpha': [0.001, 0.01, 0.1, 1.0, 10.0, 100.0],
+                'model__fit_intercept': [True, False],
+            },
+            'elastic_net': {
+                'model__alpha': [1e-4, 1e-3, 1e-2, 1e-1],
+                'model__l1_ratio': [0.1, 0.3, 0.5, 0.7, 0.9],
+                'model__max_iter': [5000, 10000, 50000],
+            },
+            'svr': {
+                'model__kernel': ['rbf', 'linear', 'poly', 'sigmoid'],
+                'model__C': [0.001, 0.01, 0.1, 1.0],
+                'model__gamma': ['scale', 'auto', 0.1, 0.01, 0.001],
+                'model__epsilon': [0.05, 0.1, 0.2],
+                'model__degree': [2, 3, 4],
+            },
+            'random_forest': {
+                'model__n_estimators': [200, 400, 800],
+                'model__max_depth': [None, 10, 20, 40, 80],
+                'model__min_samples_split': [2, 5, 10],
+                'model__min_samples_leaf': [1, 2, 4],
+                'model__max_features': ['sqrt', 'log2', None],
+            },
+            'xgboost': {
+                'model__n_estimators': [300, 600],
+                'model__max_depth': [4, 6, 8, 10, 20],
+                'model__learning_rate': [0.001, 0.01, 0.05, 0.1],
+                'model__reg_alpha': [0.0, 0.001, 0.01],
+                'model__reg_lambda': [1.0, 5.0, 10.0]
+            },
+            'mlp': {
+                'model__hidden_layer_sizes': [(128, 64), (256, 128), (256, 128, 64)],
+                'model__alpha': [1e-6, 1e-5, 1e-4],
+                'model__learning_rate_init': [0.0005, 0.001, 0.01],
+                'model__activation': ['relu', 'tanh'],
+                'model__batch_size': [8, 32, 64, 128],
+                'model__max_iter': [300, 900, 2000],
+            },
+            'plsr': {
+                'model__n_components': [5, 10, 15, 20, 30],
+            },
+            'pcr': {
+                'model__pca__n_components': [10, 20, 40, 60],
+                'model__lr__fit_intercept': [True, False],
+            }
         }
+        
+        if name not in param_grids:
+            return None
+        
+        param_grid = param_grids[name]
+        grid = list(ParameterGrid(param_grid))
+        
+        if not grid:
+            return None
+        
+        print(f"  Tuning {name} with {len(grid)} configurations...")
+        
+        # Simple cross-validation (since we don't have groups for statistical features)
+        from sklearn.model_selection import KFold
+        cv = KFold(n_splits=min(cv_splits, len(X_train)), shuffle=True, random_state=42)
+        
+        best_score = np.inf
+        best_params = None
+        
+        for params in tqdm(grid, desc=f"Tuning {name}", leave=False):
+            fold_rmses = []
+            for train_idx, val_idx in cv.split(X_train):
+                X_tr, X_val = X_train[train_idx], X_train[val_idx]
+                y_tr, y_val = y_train[train_idx], y_train[val_idx]
+                
+                model = clone(pipe).set_params(**params)
+                model.fit(X_tr, y_tr)
+                pred = model.predict(X_val)
+                
+                # Convert to actual RUL for evaluation
+                y_val_actual = np.exp(y_val) - 1
+                pred_actual = np.exp(pred) - 1
+                
+                rmse = np.sqrt(mean_squared_error(y_val_actual, pred_actual))
+                fold_rmses.append(rmse)
+            
+            mean_rmse = np.mean(fold_rmses)
+            if mean_rmse < best_score:
+                best_score = mean_rmse
+                best_params = params
+        
+        if best_params:
+            print(f"  Best {name} params: {best_params} (RMSE: {best_score:.3f})")
+        
+        return best_params
     
     def plot_feature_importance(self, output_path: Optional[str] = None):
         """Plot feature importance from the trained model."""
@@ -495,7 +903,9 @@ class StatisticalFeatureTrainerV2:
     
     def train_and_evaluate(self, dataset_name: str, cycle_limit: Optional[int] = None, 
                           n_features: int = 15, test_size: float = 0.3,
-                          random_state: int = 42) -> Dict[str, float]:
+                          random_state: int = 42, smoothing_method: str = None,
+                          smoothing_window: int = 5, use_gpu: bool = False,
+                          tune: bool = False, cv_splits: int = 5) -> Dict[str, Dict[str, float]]:
         """
         Complete training and evaluation pipeline.
         
@@ -505,9 +915,14 @@ class StatisticalFeatureTrainerV2:
             n_features: Number of top features to select
             test_size: Test set size (0.3 for 70/30 split)
             random_state: Random state for reproducibility
+            smoothing_method: Smoothing method ('hms', 'moving_mean', 'moving_median')
+            smoothing_window: Window size for smoothing (ignored for HMS)
+            use_gpu: Whether to use GPU acceleration
+            tune: Whether to perform hyperparameter tuning
+            cv_splits: Number of cross-validation splits for tuning
             
         Returns:
-            Dictionary with evaluation metrics
+            Dictionary with evaluation metrics for each model
         """
         print(f"Starting statistical feature training for dataset: {dataset_name}")
         print("=" * 60)
@@ -519,7 +934,7 @@ class StatisticalFeatureTrainerV2:
             "Calculating correlations",
             "Selecting top features",
             "Preparing training data",
-            "Training XGBoost model"
+            "Training multiple models"
         ]
         
         with tqdm(total=len(pipeline_steps), desc="Training Pipeline", unit="step", leave=True) as pbar:
@@ -528,9 +943,9 @@ class StatisticalFeatureTrainerV2:
             data = self.load_and_prepare_data(dataset_name, cycle_limit)
             pbar.update(1)
             
-            # Calculate statistical features
+            # Calculate statistical features with smoothing
             pbar.set_description("Calculating statistical features")
-            statistical_data = self.calculate_statistical_features(data)
+            statistical_data = self.calculate_statistical_features(data, smoothing_method, smoothing_window)
             pbar.update(1)
             
             # Calculate correlations and select features
@@ -556,12 +971,13 @@ class StatisticalFeatureTrainerV2:
             print(f"Test set size: {X_test.shape[0]}")
             pbar.update(1)
             
-            # Train model
-            pbar.set_description("Training XGBoost model")
-            metrics = self.train_model(X_train, y_train, X_test, y_test)
+            # Train multiple models
+            pbar.set_description("Training multiple models")
+            all_metrics = self.train_models(X_train, y_train, X_test, y_test, 
+                                          use_gpu=use_gpu, tune=tune, cv_splits=cv_splits)
             pbar.update(1)
         
-        return metrics
+        return all_metrics
 
 
 def main():
@@ -580,6 +996,16 @@ def main():
                        help='Output directory for plots (default: statistical_training_results)')
     parser.add_argument('--random_state', '-r', type=int, default=42, 
                        help='Random state for reproducibility (default: 42)')
+    parser.add_argument('--smoothing', choices=['none', 'hms', 'moving_mean', 'moving_median'], 
+                       default='none', help='Smoothing method (default: none)')
+    parser.add_argument('--smoothing_window', type=int, default=5, 
+                       help='Window size for smoothing (ignored for HMS)')
+    parser.add_argument('--gpu', action='store_true', 
+                       help='Enable GPU acceleration for compatible models')
+    parser.add_argument('--tune', action='store_true', 
+                       help='Enable hyperparameter tuning with cross-validation')
+    parser.add_argument('--cv_splits', type=int, default=5, 
+                       help='Number of cross-validation splits for tuning (default: 5)')
     
     args = parser.parse_args()
     
@@ -591,13 +1017,21 @@ def main():
         # Initialize trainer
         trainer = StatisticalFeatureTrainerV2(args.data_dir)
         
+        # Set smoothing method to None if 'none'
+        smoothing_method = None if args.smoothing == 'none' else args.smoothing
+        
         # Run training and evaluation
-        metrics = trainer.train_and_evaluate(
+        all_metrics = trainer.train_and_evaluate(
             dataset_name=args.dataset_name,
             cycle_limit=args.cycle_limit,
             n_features=args.n_features,
             test_size=args.test_size,
-            random_state=args.random_state
+            random_state=args.random_state,
+            smoothing_method=smoothing_method,
+            smoothing_window=args.smoothing_window,
+            use_gpu=args.gpu,
+            tune=args.tune,
+            cv_splits=args.cv_splits
         )
         
         # Generate plots and save predictions
@@ -608,21 +1042,31 @@ def main():
             importance_path = output_dir / f"feature_importance_{args.dataset_name}.png"
             trainer.plot_feature_importance(str(importance_path))
             
-            # Predictions plot
-            data = trainer.load_and_prepare_data(args.dataset_name, args.cycle_limit)
-            statistical_data = trainer.calculate_statistical_features(data)
-            X, y = trainer.prepare_training_data(statistical_data, trainer.feature_names)
-            X_train, X_test, y_train, y_test = train_test_split(
-                X, y, test_size=args.test_size, random_state=args.random_state
-            )
+            # Save results summary
+            results_summary = []
+            for model_name, model_metrics in all_metrics.items():
+                if model_metrics['test_rmse'] != np.inf:
+                    results_summary.append({
+                        'model': model_name,
+                        'test_rmse': model_metrics['test_rmse'],
+                        'test_mae': model_metrics['test_mae'],
+                        'test_r2': model_metrics['test_r2']
+                    })
             
-            predictions_path = output_dir / f"predictions_{args.dataset_name}.png"
-            trainer.plot_predictions(X_test, y_test, str(predictions_path))
+            if results_summary:
+                results_df = pd.DataFrame(results_summary)
+                results_df = results_df.sort_values('test_rmse')
+                results_path = output_dir / f"model_comparison_{args.dataset_name}.csv"
+                results_df.to_csv(results_path, index=False)
+                print(f"Model comparison saved to: {results_path}")
             
-            # Save detailed predictions to CSV
-            if 'y_test_actual' in metrics and 'y_test_pred_actual' in metrics:
-                predictions_csv_path = output_dir / f"detailed_predictions_{args.dataset_name}.csv"
-                trainer.save_predictions(metrics['y_test_actual'], metrics['y_test_pred_actual'], 
+            # Save detailed predictions for best model
+            best_model_name = min(all_metrics.keys(), key=lambda k: all_metrics[k]['test_rmse'])
+            best_metrics = all_metrics[best_model_name]
+            
+            if 'y_test_actual' in best_metrics and 'y_test_pred_actual' in best_metrics:
+                predictions_csv_path = output_dir / f"detailed_predictions_{args.dataset_name}_{best_model_name}.csv"
+                trainer.save_predictions(best_metrics['y_test_actual'], best_metrics['y_test_pred_actual'], 
                                        str(predictions_csv_path))
         
         print(f"\nResults saved to: {output_dir}")
