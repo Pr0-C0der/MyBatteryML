@@ -616,8 +616,14 @@ class ChemistryStatisticalTrainer:
         if self.rmse_file.exists() and self.rmse_file.stat().st_size > 0:
             try:
                 existing_df = pd.read_csv(self.rmse_file, index_col=0)
-                # Merge with existing data, keeping all models and datasets
-                combined_df = existing_df.join(df, how='outer')
+                # Update existing column or add new one
+                if self.chemistry_name in existing_df.columns:
+                    # Update existing column
+                    existing_df[self.chemistry_name] = df[self.chemistry_name]
+                    combined_df = existing_df
+                else:
+                    # Add new column
+                    combined_df = existing_df.join(df, how='outer')
                 combined_df.to_csv(self.rmse_file)
             except (pd.errors.EmptyDataError, pd.errors.ParserError):
                 # File exists but is empty or corrupted, create new one

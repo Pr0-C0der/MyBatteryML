@@ -19,7 +19,7 @@ param(
 
 # Set default chemistry paths if not provided
 if ([string]::IsNullOrEmpty($ChemistryPath)) {
-    $ChemistryPath = "data/processed"
+    $ChemistryPath = "data_chemistries"
 }
 
 Write-Host "Chemistry-Specific Statistical Feature Training" -ForegroundColor Green
@@ -41,7 +41,7 @@ if (-not (Test-Path $ChemistryPath)) {
 }
 
 # Get all chemistry folders
-$ChemistryFolders = Get-ChildItem -Path $ChemistryPath -Directory | Where-Object { $_.Name -match "^(LFP|NMC|NCA|NCM|LCO|LMO|LTO|SILICON|GRAPHITE)$" }
+$ChemistryFolders = Get-ChildItem -Path $ChemistryPath -Directory | Where-Object { $_.Name -match "^(lfp|nmc|nca|lco|mixed_nmc_lco)$" }
 
 if ($ChemistryFolders.Count -eq 0) {
     Write-Host "No chemistry folders found in '$ChemistryPath'" -ForegroundColor Red
@@ -106,7 +106,7 @@ foreach ($ChemistryFolder in $ChemistryFolders) {
     
     # Update data path for this chemistry
     $ChemistryArgs = $CommandArgs.Clone()
-    $ChemistryArgs[1] = $ChemistryPath
+    $ChemistryArgs[2] = $ChemistryPath
     
     try {
         # Run the training
