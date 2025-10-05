@@ -35,14 +35,14 @@ foreach ($Dataset in $ExpectedDatasets) {
         $PklCount = (Get-ChildItem -Path $DatasetPath -Filter "*.pkl" -File).Count
         if ($PklCount -gt 0) {
             $AvailableDatasets += $Dataset
-            Write-Host "  ✓ $Dataset : $PklCount PKL files" -ForegroundColor Green
+            Write-Host "  [OK] $Dataset : $PklCount PKL files" -ForegroundColor Green
         }
         else {
-            Write-Host "  ✗ $Dataset : No PKL files found" -ForegroundColor Red
+            Write-Host "  [X] $Dataset : No PKL files found" -ForegroundColor Red
         }
     }
     else {
-        Write-Host "  ✗ $Dataset : Directory not found" -ForegroundColor Red
+        Write-Host "  [X] $Dataset : Directory not found" -ForegroundColor Red
     }
 }
 
