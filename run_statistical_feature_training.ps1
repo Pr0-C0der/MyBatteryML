@@ -7,7 +7,7 @@ param(
     [int]$CycleLimit = 0,  # 0 means use all cycles
     [int]$NFeatures = 15,
     [double]$TestSize = 0.3,
-    [string]$DataDir = "data",
+    [string]$DataDir = "data/preprocessed",
     [string]$OutputDir = "statistical_training_results",
     [int]$RandomState = 42,
     [switch]$VerboseOutput

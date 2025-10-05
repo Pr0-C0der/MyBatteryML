@@ -393,13 +393,13 @@ class StatisticalFeatureTrainer:
                 
                 # Calculate Spearman correlation
                 correlation, _ = spearmanr(valid_data['log_rul'], valid_data[feature], nan_policy='omit')
-                        
+                
                 if not np.isnan(correlation):
                     correlations.append({
-                'feature': feature,
+                        'feature': feature,
                         'correlation': correlation,
-                'abs_correlation': abs(correlation),
-                'n_samples': len(valid_data)
+                        'abs_correlation': abs(correlation),
+                        'n_samples': len(valid_data)
                     })
                 else:
                     skipped_features.append(f"{feature} (NaN correlation)")
@@ -667,10 +667,10 @@ class StatisticalFeatureTrainer:
         correlation_df = self.calculate_correlations(statistical_data)
         self.correlations = correlation_df
         self.feature_names = self.select_top_features(correlation_df, n_features)
-            
-            # Prepare training data
+        
+        # Prepare training data
         X, y = self.prepare_training_data(statistical_data, self.feature_names)
-            
+        
         # Split data
         X_train, X_test, y_train, y_test = train_test_split(
             X, y, test_size=test_size, random_state=random_state
@@ -681,7 +681,7 @@ class StatisticalFeatureTrainer:
         
         # Train model
         metrics = self.train_model(X_train, y_train, X_test, y_test)
-    
+        
         return metrics
 
 
