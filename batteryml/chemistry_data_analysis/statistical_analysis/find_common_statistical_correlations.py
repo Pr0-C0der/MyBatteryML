@@ -43,12 +43,15 @@ class CommonStatisticalCorrelationFinder:
     """Find common statistical correlations across multiple datasets."""
 
     def __init__(self, data_path: str = 'data/preprocessed', output_dir: str = 'common_correlations_results',
-                 correlation_threshold: float = 0.5, min_datasets: int = 3, verbose: bool = False):
+                 correlation_threshold: float = 0.5, min_datasets: int = 3, verbose: bool = False,
+                 smoothing: str = 'none', smoothing_window: int = 5):
         self.data_path = Path(data_path)
         self.output_dir = Path(output_dir)
         self.correlation_threshold = correlation_threshold
         self.min_datasets = min_datasets
         self.verbose = bool(verbose)
+        self.smoothing = smoothing
+        self.smoothing_window = smoothing_window
         self.output_dir.mkdir(parents=True, exist_ok=True)
         
         # Initialize components
@@ -163,6 +166,86 @@ class CommonStatisticalCorrelationFinder:
         except Exception:
             return np.nan
 
+    def _moving_average(self, values: np.ndarray, window: int) -> np.ndarray:
+        """Apply moving average smoothing to values."""
+        if len(values) < window:
+            return values
+        
+        smoothed = np.zeros_like(values)
+        for i in range(len(values)):
+            start_idx = max(0, i - window // 2)
+            end_idx = min(len(values), i + window // 2 + 1)
+            smoothed[i] = np.mean(values[start_idx:end_idx])
+        
+        return smoothed
+
+    def _moving_median(self, values: np.ndarray, window: int) -> np.ndarray:
+        """Apply moving median smoothing to values."""
+        if len(values) < window:
+            return values
+        
+        smoothed = np.zeros_like(values)
+        for i in range(len(values)):
+            start_idx = max(0, i - window // 2)
+            end_idx = min(len(values), i + window // 2 + 1)
+            smoothed[i] = np.median(values[start_idx:end_idx])
+        
+        return smoothed
+
+    def _hampel_filter(self, values: np.ndarray, window: int, threshold: float = 3.0) -> np.ndarray:
+        """Apply Hampel filter to remove outliers."""
+        if len(values) < window:
+            return values
+        
+        smoothed = values.copy()
+        for i in range(len(values)):
+            start_idx = max(0, i - window // 2)
+            end_idx = min(len(values), i + window // 2 + 1)
+            window_values = values[start_idx:end_idx]
+            
+            median = np.median(window_values)
+            mad = np.median(np.abs(window_values - median))
+            
+            if mad > 0 and abs(values[i] - median) > threshold * mad:
+                smoothed[i] = median
+        
+        return smoothed
+
+    def _hms_filter(self, values: np.ndarray, window: int) -> np.ndarray:
+        """Apply Hampel-Median-Savitzky-Golay filter."""
+        if len(values) < window:
+            return values
+        
+        # Step 1: Hampel filter
+        hampel_filtered = self._hampel_filter(values, window)
+        
+        # Step 2: Moving median
+        median_filtered = self._moving_median(hampel_filtered, window)
+        
+        # Step 3: Savitzky-Golay filter (simplified as moving average for now)
+        sg_filtered = self._moving_average(median_filtered, max(3, window // 2))
+        
+        return sg_filtered
+
+    def apply_smoothing(self, values: np.ndarray) -> np.ndarray:
+        """Apply the specified smoothing method to values."""
+        if self.smoothing == 'none' or len(values) < 3:
+            return values
+        
+        try:
+            if self.smoothing == 'moving_mean':
+                return self._moving_average(values, self.smoothing_window)
+            elif self.smoothing == 'moving_median':
+                return self._moving_median(values, self.smoothing_window)
+            elif self.smoothing == 'hampel':
+                return self._hampel_filter(values, self.smoothing_window)
+            elif self.smoothing == 'hms':
+                return self._hms_filter(values, self.smoothing_window)
+            else:
+                return values
+        except Exception:
+            return values
+
     def process_dataset(self, dataset_name: str) -> Dict:
         """Process a single dataset and calculate statistical correlations."""
         dataset_path = self.data_path / dataset_name
@@ -217,6 +300,10 @@ class CommonStatisticalCorrelationFinder:
                     feature_values = df[feature].dropna().values
                     
                     if len(feature_values) > 0:
+                        # Apply smoothing if enabled
+                        if self.smoothing != 'none':
+                            feature_values = self.apply_smoothing(feature_values)
+                        
                         for measure in self.statistical_measures:
                             stat_value = self._calculate_statistical_measure(feature_values, measure)
                             battery_row[f"{feature}_{measure}"] = stat_value
@@ -535,6 +622,11 @@ def main():
                        help='Minimum absolute correlation threshold')
     parser.add_argument('--min_datasets', type=int, default=3,
                        help='Minimum number of datasets required for common features')
+    parser.add_argument('--smoothing', type=str, default='none',
+                       choices=['none', 'moving_mean', 'moving_median', 'hampel', 'hms'],
+                       help='Smoothing method to apply to cycle features')
+    parser.add_argument('--smoothing_window', type=int, default=5,
+                       help='Window size for smoothing operations')
     parser.add_argument('--verbose', action='store_true',
                        help='Verbose logging')
     
@@ -547,6 +639,8 @@ def main():
     print(f"Output Directory: {args.output_dir}")
     print(f"Correlation Threshold: {args.correlation_threshold}")
     print(f"Minimum Datasets: {args.min_datasets}")
+    print(f"Smoothing Method: {args.smoothing}")
+    print(f"Smoothing Window: {args.smoothing_window}")
     print("=" * 80)
     
     # Create the finder
@@ -555,7 +649,9 @@ def main():
         output_dir=args.output_dir,
         correlation_threshold=args.correlation_threshold,
         min_datasets=args.min_datasets,
-        verbose=args.verbose
+        verbose=args.verbose,
+        smoothing=args.smoothing,
+        smoothing_window=args.smoothing_window
     )
     
     # Define main steps for progress tracking

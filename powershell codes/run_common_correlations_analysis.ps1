@@ -7,6 +7,8 @@ param(
     [string]$OutputDir = "common_correlations_results",
     [double]$CorrelationThreshold = 0.5,
     [int]$MinDatasets = 3,
+    [string]$Smoothing = "none",
+    [int]$SmoothingWindow = 5,
     [switch]$Verbose = $false
 )
 
@@ -16,6 +18,8 @@ Write-Host "Data Path: $DataPath" -ForegroundColor Yellow
 Write-Host "Output Directory: $OutputDir" -ForegroundColor Yellow
 Write-Host "Correlation Threshold: $CorrelationThreshold" -ForegroundColor Yellow
 Write-Host "Minimum Datasets: $MinDatasets" -ForegroundColor Yellow
+Write-Host "Smoothing Method: $Smoothing" -ForegroundColor Yellow
+Write-Host "Smoothing Window: $SmoothingWindow" -ForegroundColor Yellow
 Write-Host ""
 
 # Check if data path exists
@@ -63,6 +67,8 @@ $CommandArgs = @(
     "--output_dir", $OutputDir
     "--correlation_threshold", $CorrelationThreshold
     "--min_datasets", $MinDatasets
+    "--smoothing", $Smoothing
+    "--smoothing_window", $SmoothingWindow
 )
 
 if ($Verbose) {
