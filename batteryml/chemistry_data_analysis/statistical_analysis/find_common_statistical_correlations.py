@@ -55,7 +55,7 @@ class CommonStatisticalCorrelationFinder:
         self.rul_annotator = RULLabelAnnotator()
         
         # Statistical measures to calculate
-        self.statistical_measures = ['mean', 'std', 'min', 'max', 'median', 'q25', 'q75']
+        self.statistical_measures = ['mean', 'std', 'min', 'max', 'median', 'q25', 'q75', 'skewness', 'kurtosis']
         
         # Dataset names to process
         self.dataset_names = ['MATR', 'CALCE', 'HNEI', 'OX', 'RWTH', 'SNL', 'HUST', 'UL_PUR']
@@ -152,6 +152,12 @@ class CommonStatisticalCorrelationFinder:
                 return np.percentile(values, 25)
             elif measure == 'q75':
                 return np.percentile(values, 75)
+            elif measure == 'skewness':
+                from scipy.stats import skew
+                return skew(values)
+            elif measure == 'kurtosis':
+                from scipy.stats import kurtosis
+                return kurtosis(values)
             else:
                 return np.nan
         except Exception:

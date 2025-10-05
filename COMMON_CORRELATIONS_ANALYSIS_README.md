@@ -86,6 +86,8 @@ The analysis calculates 7 statistical measures for each of 17 cycle features:
 - `median` - Median value across cycles
 - `q25` - 25th percentile across cycles
 - `q75` - 75th percentile across cycles
+- `skewness` - Skewness (asymmetry) of the distribution
+- `kurtosis` - Kurtosis (tail heaviness) of the distribution
 
 ## Output Format
 

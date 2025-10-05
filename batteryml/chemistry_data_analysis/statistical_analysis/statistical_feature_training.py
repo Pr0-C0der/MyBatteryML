@@ -66,7 +66,7 @@ class StatisticalFeatureTrainer:
         ]
         
         # Statistical measures to calculate
-        self.statistical_measures = ['mean', 'std', 'min', 'max', 'median', 'q25', 'q75']
+        self.statistical_measures = ['mean', 'std', 'min', 'max', 'median', 'q25', 'q75', 'skewness', 'kurtosis']
         
     def load_battery_data(self, dataset_name: str, cycle_limit: Optional[int] = None) -> pd.DataFrame:
         """
@@ -350,6 +350,12 @@ class StatisticalFeatureTrainer:
                 return np.percentile(values, 25)
             elif measure == 'q75':
                 return np.percentile(values, 75)
+            elif measure == 'skewness':
+                from scipy.stats import skew
+                return skew(values)
+            elif measure == 'kurtosis':
+                from scipy.stats import kurtosis
+                return kurtosis(values)
             else:
                 return np.nan
         except Exception:
