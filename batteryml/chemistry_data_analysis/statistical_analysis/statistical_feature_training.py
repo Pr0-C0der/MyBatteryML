@@ -74,25 +74,23 @@ class StatisticalFeatureTrainer:
         
         return data
     
-    def calculate_rul_labels(self, data: pd.DataFrame) -> pd.DataFrame:
+    def calculate_rul_labels(self, data: pd.DataFrame, dataset_name: str) -> pd.DataFrame:
         """
-        Calculate RUL labels for the battery data.
-        The data already has log_rul from the correlation analyzer.
+        Calculate RUL labels for the battery data using the correlation analyzer.
         
         Args:
             data: DataFrame with cycle features
+            dataset_name: Name of the dataset
             
         Returns:
-            DataFrame with RUL labels (already present)
+            DataFrame with RUL labels
         """
-        print("RUL labels already calculated by correlation analyzer...")
+        print("Calculating RUL labels...")
         
-        # The data already has log_rul from the correlation analyzer
-        # We just need to ensure it's present
-        if 'log_rul' not in data.columns:
-            raise ValueError("log_rul column not found in data. Check correlation analyzer setup.")
+        # Use the correlation analyzer to calculate RUL labels
+        data_with_rul = self.correlation_analyzer.calculate_rul_labels(data, dataset_name)
         
-        return data
+        return data_with_rul
     
     def calculate_correlations(self, data: pd.DataFrame) -> pd.DataFrame:
         """
@@ -494,7 +492,7 @@ class StatisticalFeatureTrainer:
             
             # Calculate RUL labels
             pbar.set_description("Calculating RUL labels")
-            data_with_rul = self.calculate_rul_labels(data)
+            data_with_rul = self.calculate_rul_labels(data, dataset_name)
             pbar.update(1)
             
             # Calculate correlations
@@ -598,7 +596,7 @@ def main():
             # Predictions plot (need to reload test data)
             print("  - Creating predictions plot...")
             data = trainer.load_and_extract_features(args.dataset_name, args.cycle_limit)
-            data_with_rul = trainer.calculate_rul_labels(data)
+            data_with_rul = trainer.calculate_rul_labels(data, args.dataset_name)
             X, y = trainer.prepare_training_data(data_with_rul, trainer.feature_names)
             X_train, X_test, y_train, y_test = train_test_split(
                 X, y, test_size=args.test_size, random_state=args.random_state
