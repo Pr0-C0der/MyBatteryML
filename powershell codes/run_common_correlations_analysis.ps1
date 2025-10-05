@@ -123,8 +123,7 @@ try {
             Write-Host "  $($File.Name)" -ForegroundColor Cyan
         }
     }
-    
-} # End of try block
+}
 catch {
     Write-Host "Error running analysis: $($_.Exception.Message)" -ForegroundColor Red
     exit 1
