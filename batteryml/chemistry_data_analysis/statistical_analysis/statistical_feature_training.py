@@ -405,8 +405,8 @@ class StatisticalFeatureTrainer:
                     skipped_features.append(f"{feature} (NaN correlation)")
                             
             except Exception as e:
-            print(f"Warning: Could not calculate correlation for {feature}: {e}")
-            skipped_features.append(f"{feature} (error: {str(e)[:50]})")
+                print(f"Warning: Could not calculate correlation for {feature}: {e}")
+                skipped_features.append(f"{feature} (error: {str(e)[:50]})")
                 continue
 
         if not correlations:
