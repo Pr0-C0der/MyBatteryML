@@ -45,7 +45,7 @@ $ChemistryFolders = Get-ChildItem -Path $ChemistryPath -Directory | Where-Object
 
 if ($ChemistryFolders.Count -eq 0) {
     Write-Host "No chemistry folders found in '$ChemistryPath'" -ForegroundColor Red
-    Write-Host "Expected folders: LFP, NMC, NCA, NCM, LCO, LMO, LTO, SILICON, GRAPHITE" -ForegroundColor Yellow
+    Write-Host "Expected folders: lfp|nmc|nca|lco|mixed_nmc_lco" -ForegroundColor Yellow
     exit 1
 }
 
