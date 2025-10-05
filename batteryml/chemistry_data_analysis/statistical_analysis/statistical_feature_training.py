@@ -86,9 +86,15 @@ class StatisticalFeatureTrainer:
             DataFrame with RUL labels
         """
         print("Calculating RUL labels...")
+        print(f"Input data shape: {data.shape}")
+        print(f"Batteries in input data: {data['battery_id'].nunique()}")
         
         # Use the correlation analyzer to calculate RUL labels
         data_with_rul = self.correlation_analyzer.calculate_rul_labels(data, dataset_name)
+        
+        print(f"Output data shape: {data_with_rul.shape}")
+        print(f"Batteries in output data: {data_with_rul['battery_id'].nunique()}")
+        print(f"log_rul range: {data_with_rul['log_rul'].min():.3f} to {data_with_rul['log_rul'].max():.3f}")
         
         return data_with_rul
     
@@ -104,6 +110,12 @@ class StatisticalFeatureTrainer:
         """
         print("Calculating battery-level feature-RUL correlations...")
         
+        # Debug: Check data structure
+        print(f"Data shape: {data.shape}")
+        print(f"Data columns: {list(data.columns)}")
+        print(f"Number of batteries: {data['battery_id'].nunique()}")
+        print(f"log_rul range: {data['log_rul'].min():.3f} to {data['log_rul'].max():.3f}")
+        
         # Get feature columns (exclude metadata columns)
         feature_cols = [col for col in data.columns 
                        if col not in ['battery_id', 'cycle_number', 'log_rul']]
@@ -114,6 +126,7 @@ class StatisticalFeatureTrainer:
         correlations = []
         
         print(f"Calculating correlations for {len(feature_cols)} features with {len(statistical_measures)} statistical measures...")
+        print(f"Feature columns: {feature_cols[:5]}...")  # Show first 5 features
         
         for feature in tqdm(feature_cols, desc="Calculating correlations", unit="feature"):
             # Calculate correlations for each statistical measure
@@ -149,6 +162,14 @@ class StatisticalFeatureTrainer:
                                 # Use mean RUL for this battery
                                 battery_ruls.append(np.mean(rul_values))
                     
+                    # Debug: Check if we have enough data for correlation
+                    if len(battery_features) < 2:
+                        if feature == feature_cols[0] and measure == statistical_measures[0]:  # Only print for first feature/measure
+                            print(f"Warning: Not enough battery data for correlation. Found {len(battery_features)} batteries with valid data.")
+                            print(f"  - Feature: {feature}")
+                            print(f"  - Measure: {measure}")
+                            print(f"  - Total batteries in dataset: {data['battery_id'].nunique()}")
+                    
                     # Calculate correlation if we have enough data points
                     if len(battery_features) > 1:
                         from scipy.stats import spearmanr
@@ -168,6 +189,8 @@ class StatisticalFeatureTrainer:
                     continue
         
         correlation_df = pd.DataFrame(correlations)
+        
+        print(f"Total correlations calculated: {len(correlations)}")
         
         if correlation_df.empty:
             print("Warning: No correlations were calculated. This might indicate:")
