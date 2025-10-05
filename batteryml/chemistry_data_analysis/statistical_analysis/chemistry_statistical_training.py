@@ -6,11 +6,12 @@ This script performs chemistry-specific training using statistical features,
 following the pattern from chemistry_training.py but with statistical feature extraction
 instead of raw cycle features.
 
-Key differences from dataset-specific training:
+Key features:
 - Works with chemistry folders (e.g., LFP, NMC, NCA) containing multiple datasets
 - Creates chemistry-level train/test splits across datasets within the chemistry
 - Uses statistical features (mean, std, min, max, etc.) aggregated per battery
-- Supports both battery-level and cycle-level training modes
+- Supports manual feature selection for training
+- Battery-level training only (cycle level removed for simplicity)
 """
 
 import pandas as pd
@@ -68,7 +69,7 @@ except Exception:
     _HAS_GPYTORCH = False
 
 # Import the working correlation analyzer
-from .feature_rul_correlation import FeatureRULCorrelationAnalyzer
+from feature_rul_correlation import FeatureRULCorrelationAnalyzer
 from batteryml.data.battery_data import BatteryData
 from batteryml.label.rul import RULLabelAnnotator
 from batteryml.chemistry_data_analysis.cycle_features import get_extractor_class
@@ -78,12 +79,31 @@ warnings.filterwarnings('ignore')
 
 
 class ChemistryStatisticalTrainer:
-    """Chemistry-specific trainer for RUL prediction using statistical features."""
+    """Chemistry-specific trainer for RUL prediction using statistical features.
+    
+    This trainer focuses on battery-level training with manual feature selection.
+    Cycle-level training has been removed for simplicity.
+    """
 
     def __init__(self, data_path: str, output_dir: str = 'chemistry_statistical_results', 
                  verbose: bool = False, dataset_hint: Optional[str] = None, 
-                 cycle_limit: Optional[int] = None, smoothing: str = 'none', 
-                 ma_window: int = 5, use_gpu: bool = False, train_test_ratio: float = 0.7):
+                 cycle_limit: Optional[int] = None, smoothing: str = 'none', ma_window: int = 5, 
+                 use_gpu: bool = False, train_test_ratio: float = 0.7, 
+                 manual_features: Optional[List[str]] = None, 
+                 direct_statistical_features: Optional[List[str]] = None):
+        """
+        Initialize chemistry statistical trainer.
+        
+        Args:
+            cycle_limit: Limit analysis to first N cycles (useful for early-cycle prediction)
+            manual_features: List of base cycle features (e.g., ['charge_cycle_length', 'avg_c_rate']).
+                           Each feature will be expanded with all statistical measures 
+                           (mean, std, min, max, median, q25, q75, skewness, kurtosis).
+                           So 'charge_cycle_length' becomes 'mean_charge_cycle_length', 
+                           'std_charge_cycle_length', etc.
+            direct_statistical_features: List of specific statistical features (e.g., ['mean_cycle_length', 'median_charge_cycle_length']).
+                                       If provided, this overrides manual_features and uses these exact features.
+        """
         self.data_path = Path(data_path)
         self.output_dir = Path(output_dir)
         self.verbose = bool(verbose)
@@ -93,6 +113,8 @@ class ChemistryStatisticalTrainer:
         self.ma_window = int(ma_window) if int(ma_window) > 1 else 5
         self.use_gpu = bool(use_gpu)
         self.train_test_ratio = float(train_test_ratio)
+        self.manual_features = manual_features
+        self.direct_statistical_features = direct_statistical_features
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
         # Chemistry name from data path
@@ -108,11 +130,41 @@ class ChemistryStatisticalTrainer:
         # Initialize RMSE tracking
         self.rmse_file = self.output_dir / "RMSE.csv"
         
-        # Create output subdirectories
+        # Create output subdirectories (only battery level now)
         self.battery_level_dir = self.output_dir / self.chemistry_name / 'battery_level'
-        self.cycle_level_dir = self.output_dir / self.chemistry_name / 'cycle_level'
         self.battery_level_dir.mkdir(parents=True, exist_ok=True)
-        self.cycle_level_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Handle feature selection logic
+        if self.direct_statistical_features is not None:
+            # Use direct statistical features (e.g., ['mean_cycle_length', 'median_charge_cycle_length'])
+            self.statistical_feature_names = self.direct_statistical_features
+            # Extract base features from statistical feature names for cycle feature extraction
+            self.base_features_for_extraction = []
+            for stat_feature in self.direct_statistical_features:
+                # Extract base feature name (everything before the last underscore)
+                parts = stat_feature.split('_')
+                if len(parts) >= 2:
+                    base_feature = '_'.join(parts[:-1])  # Everything except the last part (statistical measure)
+                    if base_feature not in self.base_features_for_extraction:
+                        self.base_features_for_extraction.append(base_feature)
+        else:
+            # Default base feature names if none provided (these will be expanded with statistical measures)
+            if self.manual_features is None:
+                self.manual_features = [
+                    'avg_c_rate', 'max_charge_capacity', 'avg_discharge_capacity', 'avg_charge_capacity', 
+                    'charge_cycle_length', 'discharge_cycle_length', 'cycle_length', 
+                    'power_during_charge_cycle', 'power_during_discharge_cycle',
+                    'avg_charge_c_rate', 'avg_discharge_c_rate', 'charge_to_discharge_time_ratio',
+                    'avg_voltage', 'avg_current'
+                ]
+            
+            # Generate all statistical feature names from base features
+            self.statistical_feature_names = []
+            for base_feature in self.manual_features:
+                for measure in self.statistical_measures:
+                    self.statistical_feature_names.append(f"{base_feature}_{measure}")
+            
+            self.base_features_for_extraction = self.manual_features
 
     def _battery_files(self) -> List[Path]:
         """Get all battery files in the chemistry folder."""
@@ -393,26 +445,53 @@ class ChemistryStatisticalTrainer:
             # Calculate statistical measures for each feature
             battery_row = {'battery_id': battery.cell_id, 'dataset': self._infer_dataset_for_battery(battery)}
             
-            for feature in feature_names:
-                if feature in df.columns:
-                    feature_values = df[feature].dropna().values
-                    
-                    if len(feature_values) > 0:
-                        # Apply smoothing if specified
-                        if self.smoothing != 'none':
-                            feature_values = self.apply_smoothing(feature_values, self.smoothing, self.ma_window)
+            if self.direct_statistical_features is not None:
+                # Use direct statistical features
+                for stat_feature in self.statistical_feature_names:
+                    # Extract base feature and measure from statistical feature name
+                    parts = stat_feature.split('_')
+                    if len(parts) >= 2:
+                        base_feature = '_'.join(parts[:-1])
+                        measure = parts[-1]
                         
-                        for measure in self.statistical_measures:
-                            stat_value = self._calculate_statistical_measure(feature_values, measure)
-                            battery_row[f"{feature}_{measure}"] = stat_value
+                        if base_feature in df.columns:
+                            feature_values = df[base_feature].dropna().values
+                            
+                            if len(feature_values) > 0:
+                                # Apply smoothing if specified
+                                if self.smoothing != 'none':
+                                    feature_values = self.apply_smoothing(feature_values, self.smoothing, self.ma_window)
+                                
+                                stat_value = self._calculate_statistical_measure(feature_values, measure)
+                                battery_row[stat_feature] = stat_value
+                            else:
+                                battery_row[stat_feature] = np.nan
+                        else:
+                            battery_row[stat_feature] = np.nan
                     else:
-                        # Fill with NaN if no valid values
+                        battery_row[stat_feature] = np.nan
+            else:
+                # Use base features and expand with all statistical measures
+                for feature in feature_names:
+                    if feature in df.columns:
+                        feature_values = df[feature].dropna().values
+                        
+                        if len(feature_values) > 0:
+                            # Apply smoothing if specified
+                            if self.smoothing != 'none':
+                                feature_values = self.apply_smoothing(feature_values, self.smoothing, self.ma_window)
+                            
+                            for measure in self.statistical_measures:
+                                stat_value = self._calculate_statistical_measure(feature_values, measure)
+                                battery_row[f"{feature}_{measure}"] = stat_value
+                        else:
+                            # Fill with NaN if no valid values
+                            for measure in self.statistical_measures:
+                                battery_row[f"{feature}_{measure}"] = np.nan
+                    else:
+                        # Fill with NaN if feature not available
                         for measure in self.statistical_measures:
                             battery_row[f"{feature}_{measure}"] = np.nan
-                else:
-                    # Fill with NaN if feature not available
-                    for measure in self.statistical_measures:
-                        battery_row[f"{feature}_{measure}"] = np.nan
             
             # Calculate RUL
             try:
@@ -549,25 +628,20 @@ class ChemistryStatisticalTrainer:
         if self.verbose:
             print(f"RMSE results saved to {self.rmse_file}")
 
-    def train_battery_level(self, features: Optional[List[str]] = None, 
-                          tune: bool = False, cv_splits: int = 5) -> Dict[str, float]:
+    def train_battery_level(self, tune: bool = False, cv_splits: int = 5) -> Dict[str, float]:
         """Train battery-level RUL prediction models using statistical features."""
         if self.verbose:
             print(f"Training battery-level statistical models for {self.chemistry_name}...")
+            if self.direct_statistical_features is not None:
+                print(f"Using direct statistical features: {self.direct_statistical_features}")
+                print(f"Total features: {len(self.statistical_feature_names)}")
+            else:
+                print(f"Using base features: {self.manual_features}")
+                print(f"Generating statistical measures: {self.statistical_measures}")
+                print(f"Total statistical features: {len(self.statistical_feature_names)}")
         
-        # Get feature names
-        if features is None:
-            # Use default cycle feature names
-            feature_names = [
-                'avg_c_rate', 'max_temperature', 'max_discharge_capacity', 'max_charge_capacity',
-                'avg_discharge_capacity', 'avg_charge_capacity', 'charge_cycle_length', 
-                'discharge_cycle_length', 'peak_cv_length', 'cycle_length', 
-                'power_during_charge_cycle', 'power_during_discharge_cycle',
-                'avg_charge_c_rate', 'avg_discharge_c_rate', 'charge_to_discharge_time_ratio',
-                'avg_voltage', 'avg_current'
-            ]
-        else:
-            feature_names = features
+        # Use base features for cycle feature extraction
+        feature_names = self.base_features_for_extraction
         
         # Create chemistry-level train/test split
         train_files, test_files = self._create_chemistry_train_test_split()
@@ -777,14 +851,16 @@ def main():
     parser.add_argument('--dataset_hint', type=str, default=None, 
                        help='Optional dataset name hint')
     parser.add_argument('--cycle_limit', type=int, default=None, 
-                       help='Limit analysis to first N cycles')
+                       help='Limit analysis to first N cycles (useful for early-cycle prediction)')
     parser.add_argument('--smoothing', type=str, default='none', 
                        choices=['none', 'ma', 'median', 'hms'], 
                        help='Smoothing method')
     parser.add_argument('--ma_window', type=int, default=5, 
                        help='Window size for moving average/median smoothing')
-    parser.add_argument('--features', type=str, nargs='+', default=None, 
-                       help='Features to use (default: all)')
+    parser.add_argument('--manual_features', type=str, nargs='+', default=None, 
+                       help='Base cycle features to use (e.g., charge_cycle_length avg_c_rate). Each will be expanded with statistical measures (mean, std, min, max, median, q25, q75, skewness, kurtosis)')
+    parser.add_argument('--direct_statistical_features', type=str, nargs='+', default=None, 
+                       help='Direct statistical features to use (e.g., mean_cycle_length median_charge_cycle_length). Overrides manual_features if provided.')
     parser.add_argument('--use_gpu', action='store_true', 
                        help='Use GPU acceleration')
     parser.add_argument('--tune', action='store_true', 
@@ -807,11 +883,13 @@ def main():
         smoothing=args.smoothing,
         ma_window=args.ma_window,
         use_gpu=args.use_gpu,
-        train_test_ratio=args.train_test_ratio
+        train_test_ratio=args.train_test_ratio,
+        manual_features=args.manual_features,
+        direct_statistical_features=args.direct_statistical_features
     )
     
     # Train battery-level models
-    results = trainer.train_battery_level(args.features, args.tune, args.cv_splits)
+    results = trainer.train_battery_level(args.tune, args.cv_splits)
     
     if args.verbose:
         print(f"Training completed for {trainer.chemistry_name}")

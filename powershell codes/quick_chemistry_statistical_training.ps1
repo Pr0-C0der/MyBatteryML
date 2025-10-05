@@ -29,7 +29,7 @@ if ($PklCount -eq 0) {
 }
 
 # Build command
-$Args = @(
+$CommandArgs = @(
     "batteryml/chemistry_data_analysis/statistical_analysis/chemistry_statistical_training.py"
     "--data_path", $ChemistryPath
     "--output_dir", "quick_chemistry_test_results"
@@ -39,16 +39,16 @@ $Args = @(
 )
 
 if ($Verbose) {
-    $Args += "--verbose"
+    $CommandArgs += "--verbose"
 }
 
 Write-Host "Running quick test..." -ForegroundColor Yellow
-Write-Host "Command: python $($Args -join ' ')" -ForegroundColor Gray
+Write-Host "Command: python $($CommandArgs -join ' ')" -ForegroundColor Gray
 Write-Host ""
 
 try {
     $StartTime = Get-Date
-    python @Args
+    python @CommandArgs
     $EndTime = Get-Date
     $Duration = $EndTime - $StartTime
     

@@ -6,10 +6,10 @@ param(
     [string]$ChemistryPath = "",
     [string]$OutputDir = "chemistry_statistical_results",
     [string]$DatasetHint = "",
-    [int]$CycleLimit = 100,
+    [int]$CycleLimit = 0,
     [string]$Smoothing = "none",
     [int]$MaWindow = 5,
-    [string[]]$Features = @(),
+    [string[]]$ManualFeatures = @(),
     [switch]$UseGPU = $false,
     [switch]$Tune = $false,
     [int]$CvSplits = 5,
@@ -26,8 +26,10 @@ Write-Host "Chemistry-Specific Statistical Feature Training" -ForegroundColor Gr
 Write-Host "=============================================" -ForegroundColor Green
 Write-Host "Chemistry Path: $ChemistryPath" -ForegroundColor Yellow
 Write-Host "Output Directory: $OutputDir" -ForegroundColor Yellow
-Write-Host "Cycle Limit: $CycleLimit" -ForegroundColor Yellow
+Write-Host "Cycle Limit: $(if ($CycleLimit -gt 0) { $CycleLimit } else { 'None (all cycles)' })" -ForegroundColor Yellow
 Write-Host "Smoothing: $Smoothing" -ForegroundColor Yellow
+Write-Host "Base Features: $($ManualFeatures -join ', ')" -ForegroundColor Yellow
+Write-Host "  (Each will be expanded with statistical measures: mean, std, min, max, median, q25, q75, skewness, kurtosis)" -ForegroundColor Gray
 Write-Host "Use GPU: $UseGPU" -ForegroundColor Yellow
 Write-Host "Hyperparameter Tuning: $Tune" -ForegroundColor Yellow
 Write-Host ""
@@ -55,11 +57,10 @@ foreach ($folder in $ChemistryFolders) {
 Write-Host ""
 
 # Build command arguments
-$Args = @(
+$CommandArgs = @(
     "batteryml/chemistry_data_analysis/statistical_analysis/chemistry_statistical_training.py"
     "--data_path", $ChemistryPath
     "--output_dir", $OutputDir
-    "--cycle_limit", $CycleLimit
     "--smoothing", $Smoothing
     "--ma_window", $MaWindow
     "--cv_splits", $CvSplits
@@ -67,23 +68,27 @@ $Args = @(
 )
 
 if (-not [string]::IsNullOrEmpty($DatasetHint)) {
-    $Args += @("--dataset_hint", $DatasetHint)
+    $CommandArgs += @("--dataset_hint", $DatasetHint)
 }
 
-if ($Features.Count -gt 0) {
-    $Args += @("--features") + $Features
+if ($CycleLimit -gt 0) {
+    $CommandArgs += @("--cycle_limit", $CycleLimit)
+}
+
+if ($ManualFeatures.Count -gt 0) {
+    $CommandArgs += @("--manual_features") + $ManualFeatures
 }
 
 if ($UseGPU) {
-    $Args += "--use_gpu"
+    $CommandArgs += "--use_gpu"
 }
 
 if ($Tune) {
-    $Args += "--tune"
+    $CommandArgs += "--tune"
 }
 
 if ($Verbose) {
-    $Args += "--verbose"
+    $CommandArgs += "--verbose"
 }
 
 # Run training for each chemistry
@@ -100,7 +105,7 @@ foreach ($ChemistryFolder in $ChemistryFolders) {
     Write-Host "----------------------------------------" -ForegroundColor Magenta
     
     # Update data path for this chemistry
-    $ChemistryArgs = $Args.Clone()
+    $ChemistryArgs = $CommandArgs.Clone()
     $ChemistryArgs[1] = $ChemistryPath
     
     try {
@@ -114,7 +119,8 @@ foreach ($ChemistryFolder in $ChemistryFolders) {
         Write-Host "Completed $ChemistryName in $($Duration.TotalMinutes.ToString('F1')) minutes" -ForegroundColor Green
         Write-Host ""
         
-    } catch {
+    }
+    catch {
         Write-Host "Error training $ChemistryName : $($_.Exception.Message)" -ForegroundColor Red
         Write-Host ""
     }
@@ -132,7 +138,8 @@ if (Test-Path "$OutputDir/RMSE.csv") {
     try {
         $Results = Import-Csv "$OutputDir/RMSE.csv"
         $Results | Format-Table -AutoSize
-    } catch {
+    }
+    catch {
         Write-Host "Could not display results summary" -ForegroundColor Yellow
     }
 }

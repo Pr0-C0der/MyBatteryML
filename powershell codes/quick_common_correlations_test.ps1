@@ -44,7 +44,7 @@ Write-Host "Found $($AvailableDatasets.Count) datasets: $($AvailableDatasets -jo
 Write-Host ""
 
 # Build command for quick test (lower thresholds for faster execution)
-$Args = @(
+$CommandArgs = @(
     "batteryml/chemistry_data_analysis/statistical_analysis/find_common_statistical_correlations.py"
     "--data_path", $DataPath
     "--output_dir", "quick_correlations_test_results"
@@ -53,11 +53,11 @@ $Args = @(
 )
 
 if ($Verbose) {
-    $Args += "--verbose"
+    $CommandArgs += "--verbose"
 }
 
 Write-Host "Running quick test..." -ForegroundColor Yellow
-Write-Host "Command: python $($Args -join ' ')" -ForegroundColor Gray
+Write-Host "Command: python $($CommandArgs -join ' ')" -ForegroundColor Gray
 Write-Host ""
 
 try {

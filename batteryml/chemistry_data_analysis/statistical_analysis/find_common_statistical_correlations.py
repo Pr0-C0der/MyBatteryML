@@ -65,9 +65,9 @@ class CommonStatisticalCorrelationFinder:
         
         # Feature names to analyze
         self.feature_names = [
-            'avg_c_rate', 'max_temperature', 'max_discharge_capacity', 'max_charge_capacity',
+            'avg_c_rate', 'max_charge_capacity',
             'avg_discharge_capacity', 'avg_charge_capacity', 'charge_cycle_length', 
-            'discharge_cycle_length', 'peak_cv_length', 'cycle_length', 
+            'discharge_cycle_length', 'cycle_length', 
             'power_during_charge_cycle', 'power_during_discharge_cycle',
             'avg_charge_c_rate', 'avg_discharge_c_rate', 'charge_to_discharge_time_ratio',
             'avg_voltage', 'avg_current'
