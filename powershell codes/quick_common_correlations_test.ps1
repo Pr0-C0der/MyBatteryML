@@ -62,7 +62,7 @@ Write-Host ""
 
 try {
     $StartTime = Get-Date
-    python @Args
+    python @CommandArgs
     $EndTime = Get-Date
     $Duration = $EndTime - $StartTime
     
