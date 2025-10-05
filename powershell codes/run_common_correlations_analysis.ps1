@@ -57,7 +57,7 @@ Write-Host ($AvailableDatasets -join ", ") -ForegroundColor Cyan
 Write-Host ""
 
 # Build command arguments
-$Args = @(
+$CommandArgs = @(
     "batteryml/chemistry_data_analysis/statistical_analysis/find_common_statistical_correlations.py"
     "--data_path", $DataPath
     "--output_dir", $OutputDir
@@ -66,16 +66,16 @@ $Args = @(
 )
 
 if ($Verbose) {
-    $Args += "--verbose"
+    $CommandArgs += "--verbose"
 }
 
 Write-Host "Running common correlations analysis..." -ForegroundColor Yellow
-Write-Host "Command: python $($Args -join ' ')" -ForegroundColor Gray
+Write-Host "Command: python $($CommandArgs -join ' ')" -ForegroundColor Gray
 Write-Host ""
 
 try {
     $StartTime = Get-Date
-    python @Args
+    python @CommandArgs
     $EndTime = Get-Date
     $Duration = $EndTime - $StartTime
     
