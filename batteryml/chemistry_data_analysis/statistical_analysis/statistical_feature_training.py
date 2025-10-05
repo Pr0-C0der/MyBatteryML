@@ -80,46 +80,66 @@ class StatisticalFeatureTrainer:
             DataFrame containing battery data with cycle features
         """
         print(f"Loading battery data for dataset: {dataset_name}")
+        print(f"Data directory: {self.data_dir}")
         
         data_path = self.data_dir / dataset_name
+        print(f"Looking for data in: {data_path}")
         
         if not data_path.exists():
             raise FileNotFoundError(f"Dataset directory not found: {data_path}")
         
         # Load all battery files in the dataset
         battery_files = list(data_path.glob("*.pkl"))
+        print(f"Found {len(battery_files)} PKL files")
+        
         if not battery_files:
             raise FileNotFoundError(f"No PKL files found in {data_path}")
         
         all_cycle_data = []
+        successful_loads = 0
+        failed_loads = 0
         
         for file_path in tqdm(battery_files, desc="Loading batteries", unit="battery"):
             try:
                 # Load battery data
                 battery = BatteryData.load(file_path)
+                print(f"Loaded battery {battery.cell_id} with {len(battery.cycle_data)} cycles")
                 
                 # Extract cycle features
                 cycle_data = self._extract_cycle_features(battery, dataset_name)
+                print(f"Extracted {len(cycle_data)} cycle records with {len(cycle_data.columns)} features")
                 
                 if not cycle_data.empty:
                     cycle_data['battery_id'] = battery.cell_id
                     all_cycle_data.append(cycle_data)
+                    successful_loads += 1
+                    print(f"Successfully processed battery {battery.cell_id}")
+                else:
+                    print(f"Warning: No cycle data extracted for battery {battery.cell_id}")
+                    failed_loads += 1
                     
             except Exception as e:
                 print(f"Warning: Could not load {file_path}: {e}")
+                failed_loads += 1
                 continue
+        
+        print(f"Successfully loaded {successful_loads} batteries, failed {failed_loads}")
         
         if not all_cycle_data:
             raise ValueError(f"No valid battery data found in {data_path}")
         
         # Combine all data
         data = pd.concat(all_cycle_data, ignore_index=True)
+        print(f"Combined data shape: {data.shape}")
+        print(f"Data columns: {list(data.columns)}")
         
         # Apply cycle limit if specified
         if cycle_limit is not None:
+            original_count = len(data)
             data = data[data['cycle_number'] <= cycle_limit]
+            print(f"Applied cycle limit {cycle_limit}: {original_count} -> {len(data)} records")
         
-        print(f"Loaded {len(data)} cycle records from {data['battery_id'].nunique()} batteries")
+        print(f"Final data: {len(data)} cycle records from {data['battery_id'].nunique()} batteries")
         return data
     
     def _extract_cycle_features(self, battery: BatteryData, dataset_name: str) -> pd.DataFrame:
@@ -133,31 +153,45 @@ class StatisticalFeatureTrainer:
         Returns:
             DataFrame with cycle features
         """
+        print(f"Extracting features for battery {battery.cell_id} using dataset {dataset_name}")
+        
         try:
             # Try chemistry-specific extractor first
             extractor_class = get_extractor_class(dataset_name)
+            print(f"Extractor class: {extractor_class}")
+            
             if extractor_class is not None:
                 extractor = extractor_class()
                 rows = []
+                valid_cycles = 0
                 
                 for cycle in battery.cycle_data:
                     row = {'cycle_number': cycle.cycle_number}
+                    valid_features = 0
                     
                     for feature_name in self.cycle_feature_names:
                         if hasattr(extractor, feature_name):
                             try:
                                 value = getattr(extractor, feature_name)(battery, cycle)
-                                row[feature_name] = float(value) if value is not None and np.isfinite(float(value)) else np.nan
-                            except Exception:
+                                if value is not None and np.isfinite(float(value)):
+                                    row[feature_name] = float(value)
+                                    valid_features += 1
+                                else:
+                                    row[feature_name] = np.nan
+                            except Exception as e:
                                 row[feature_name] = np.nan
                         else:
                             row[feature_name] = np.nan
                     
                     rows.append(row)
+                    if valid_features > 0:
+                        valid_cycles += 1
                 
-                return pd.DataFrame(rows)
+                result = pd.DataFrame(rows)
+                print(f"Chemistry extractor: {len(result)} cycles, {valid_cycles} with valid features")
+                return result
             else:
-                # Fall back to basic feature extraction
+                print("No chemistry-specific extractor found, using basic extraction")
                 return self._extract_basic_features(battery)
                 
         except Exception as e:
@@ -174,7 +208,10 @@ class StatisticalFeatureTrainer:
         Returns:
             DataFrame with basic cycle features
         """
+        print(f"Using basic feature extraction for battery {battery.cell_id}")
         rows = []
+        valid_cycles = 0
+        
         for cycle in battery.cycle_data:
             if not cycle.discharge_capacity_in_Ah or not cycle.charge_capacity_in_Ah:
                 continue
@@ -194,8 +231,11 @@ class StatisticalFeatureTrainer:
                     row[feature] = np.nan
             
             rows.append(row)
+            valid_cycles += 1
         
-        return pd.DataFrame(rows)
+        result = pd.DataFrame(rows)
+        print(f"Basic extractor: {len(result)} cycles processed, {valid_cycles} valid")
+        return result
     
     def calculate_rul_labels(self, data: pd.DataFrame) -> pd.DataFrame:
         """
@@ -332,8 +372,10 @@ class StatisticalFeatureTrainer:
                        if col not in ['battery_id', 'log_rul', 'rul']]
         
         print(f"Calculating correlations for {len(feature_cols)} features")
+        print(f"First 5 features: {feature_cols[:5]}")
         
         correlations = []
+        skipped_features = []
         
         for feature in tqdm(feature_cols, desc="Calculating correlations", unit="feature"):
             try:
@@ -341,6 +383,12 @@ class StatisticalFeatureTrainer:
                 valid_data = data[['log_rul', feature]].dropna()
                 
                 if len(valid_data) < 2:
+                    skipped_features.append(f"{feature} (insufficient data: {len(valid_data)} samples)")
+                    continue
+                
+                # Check if feature has any variation
+                if valid_data[feature].std() == 0:
+                    skipped_features.append(f"{feature} (no variation)")
                     continue
                 
                 # Calculate Spearman correlation
@@ -353,9 +401,12 @@ class StatisticalFeatureTrainer:
                         'abs_correlation': abs(correlation),
                         'n_samples': len(valid_data)
                     })
+                else:
+                    skipped_features.append(f"{feature} (NaN correlation)")
                     
             except Exception as e:
                 print(f"Warning: Could not calculate correlation for {feature}: {e}")
+                skipped_features.append(f"{feature} (error: {str(e)[:50]})")
                 continue
         
         if not correlations:
