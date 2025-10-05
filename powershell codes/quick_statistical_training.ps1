@@ -41,10 +41,12 @@ try {
     Invoke-Expression $Command
     if ($LASTEXITCODE -eq 0) {
         Write-Host "`n✅ Training completed successfully!" -ForegroundColor Green
-    } else {
+    }
+    else {
         Write-Host "`n❌ Training failed (exit code: $LASTEXITCODE)" -ForegroundColor Red
     }
-} catch {
+}
+catch {
     Write-Host "`n❌ Error: $($_.Exception.Message)" -ForegroundColor Red
 }
 

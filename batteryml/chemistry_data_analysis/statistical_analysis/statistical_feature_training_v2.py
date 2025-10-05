@@ -97,7 +97,7 @@ class StatisticalFeatureTrainerV2:
         
         battery_stats = []
         
-        for battery_id, battery_data in tqdm(data.groupby('battery_id'), desc="Processing batteries", unit="battery"):
+        for battery_id, battery_data in tqdm(data.groupby('battery_id'), desc="Processing batteries", unit="battery", leave=True):
             try:
                 # Calculate statistical measures for each feature
                 battery_row = {'battery_id': battery_id}
@@ -176,7 +176,7 @@ class StatisticalFeatureTrainerV2:
         
         correlations = []
         
-        for feature in tqdm(feature_cols, desc="Calculating correlations", unit="feature"):
+        for feature in tqdm(feature_cols, desc="Calculating correlations", unit="feature", leave=True):
             try:
                 # Get valid data points
                 valid_data = data[['log_rul', feature]].dropna()
@@ -337,6 +337,35 @@ class StatisticalFeatureTrainerV2:
         print(f"Test R²:       {test_r2:.3f}")
         print("="*60)
         
+        # Print sample predictions vs actual values
+        print("\nSAMPLE PREDICTIONS (Test Set):")
+        print("-" * 60)
+        print(f"{'Index':<6} {'Actual RUL':<12} {'Predicted RUL':<15} {'Error':<10} {'Error %':<10}")
+        print("-" * 60)
+        
+        # Show first 10 predictions
+        n_samples = min(10, len(y_test_actual))
+        for i in range(n_samples):
+            actual = y_test_actual[i]
+            predicted = y_test_pred_actual[i]
+            error = predicted - actual
+            error_pct = (error / actual) * 100 if actual != 0 else 0
+            print(f"{i:<6} {actual:<12.1f} {predicted:<15.1f} {error:<10.1f} {error_pct:<10.1f}%")
+        
+        if len(y_test_actual) > 10:
+            print(f"... and {len(y_test_actual) - 10} more samples")
+        
+        # Print summary statistics
+        print("\nPREDICTION SUMMARY:")
+        print("-" * 40)
+        print(f"Actual RUL range:     {y_test_actual.min():.1f} - {y_test_actual.max():.1f} cycles")
+        print(f"Predicted RUL range:  {y_test_pred_actual.min():.1f} - {y_test_pred_actual.max():.1f} cycles")
+        print(f"Mean actual RUL:      {y_test_actual.mean():.1f} cycles")
+        print(f"Mean predicted RUL:   {y_test_pred_actual.mean():.1f} cycles")
+        print(f"Mean absolute error:  {np.mean(np.abs(y_test_actual - y_test_pred_actual)):.1f} cycles")
+        print(f"Max absolute error:   {np.max(np.abs(y_test_actual - y_test_pred_actual)):.1f} cycles")
+        print("="*60)
+        
         return {
             'train_rmse': train_rmse,
             'test_rmse': test_rmse,
@@ -345,7 +374,9 @@ class StatisticalFeatureTrainerV2:
             'train_mape': train_mape,
             'test_mape': test_mape,
             'train_r2': train_r2,
-            'test_r2': test_r2
+            'test_r2': test_r2,
+            'y_test_actual': y_test_actual,
+            'y_test_pred_actual': y_test_pred_actual
         }
     
     def plot_feature_importance(self, output_path: Optional[str] = None):
@@ -434,6 +465,34 @@ class StatisticalFeatureTrainerV2:
         
         plt.close()
     
+    def save_predictions(self, y_test_actual: np.ndarray, y_test_pred_actual: np.ndarray, 
+                        output_path: str):
+        """Save detailed predictions to CSV file."""
+        print("Saving detailed predictions...")
+        
+        # Create DataFrame with predictions
+        predictions_df = pd.DataFrame({
+            'actual_rul': y_test_actual,
+            'predicted_rul': y_test_pred_actual,
+            'error': y_test_pred_actual - y_test_actual,
+            'abs_error': np.abs(y_test_pred_actual - y_test_actual),
+            'error_percentage': ((y_test_pred_actual - y_test_actual) / y_test_actual) * 100
+        })
+        
+        # Add index
+        predictions_df.index.name = 'sample_index'
+        predictions_df = predictions_df.reset_index()
+        
+        # Save to CSV
+        predictions_df.to_csv(output_path, index=False)
+        print(f"Detailed predictions saved to: {output_path}")
+        
+        # Print summary statistics
+        print(f"Saved {len(predictions_df)} predictions")
+        print(f"Mean absolute error: {predictions_df['abs_error'].mean():.2f} cycles")
+        print(f"Max absolute error: {predictions_df['abs_error'].max():.2f} cycles")
+        print(f"Mean error percentage: {predictions_df['error_percentage'].abs().mean():.2f}%")
+    
     def train_and_evaluate(self, dataset_name: str, cycle_limit: Optional[int] = None, 
                           n_features: int = 15, test_size: float = 0.3,
                           random_state: int = 42) -> Dict[str, float]:
@@ -453,30 +512,54 @@ class StatisticalFeatureTrainerV2:
         print(f"Starting statistical feature training for dataset: {dataset_name}")
         print("=" * 60)
         
-        # Load and prepare data using the working correlation analyzer
-        data = self.load_and_prepare_data(dataset_name, cycle_limit)
+        # Create progress bar for main pipeline steps
+        pipeline_steps = [
+            "Loading and preparing data",
+            "Calculating statistical features", 
+            "Calculating correlations",
+            "Selecting top features",
+            "Preparing training data",
+            "Training XGBoost model"
+        ]
         
-        # Calculate statistical features
-        statistical_data = self.calculate_statistical_features(data)
-        
-        # Calculate correlations and select features
-        correlation_df = self.calculate_correlations(statistical_data)
-        self.correlations = correlation_df
-        self.feature_names = self.select_top_features(correlation_df, n_features)
-        
-        # Prepare training data
-        X, y = self.prepare_training_data(statistical_data, self.feature_names)
-        
-        # Split data
-        X_train, X_test, y_train, y_test = train_test_split(
-            X, y, test_size=test_size, random_state=random_state
-        )
-        
-        print(f"Training set size: {X_train.shape[0]}")
-        print(f"Test set size: {X_test.shape[0]}")
-        
-        # Train model
-        metrics = self.train_model(X_train, y_train, X_test, y_test)
+        with tqdm(total=len(pipeline_steps), desc="Training Pipeline", unit="step", leave=True) as pbar:
+            # Load and prepare data using the working correlation analyzer
+            pbar.set_description("Loading and preparing data")
+            data = self.load_and_prepare_data(dataset_name, cycle_limit)
+            pbar.update(1)
+            
+            # Calculate statistical features
+            pbar.set_description("Calculating statistical features")
+            statistical_data = self.calculate_statistical_features(data)
+            pbar.update(1)
+            
+            # Calculate correlations and select features
+            pbar.set_description("Calculating correlations")
+            correlation_df = self.calculate_correlations(statistical_data)
+            self.correlations = correlation_df
+            pbar.update(1)
+            
+            pbar.set_description("Selecting top features")
+            self.feature_names = self.select_top_features(correlation_df, n_features)
+            pbar.update(1)
+            
+            # Prepare training data
+            pbar.set_description("Preparing training data")
+            X, y = self.prepare_training_data(statistical_data, self.feature_names)
+            
+            # Split data
+            X_train, X_test, y_train, y_test = train_test_split(
+                X, y, test_size=test_size, random_state=random_state
+            )
+            
+            print(f"Training set size: {X_train.shape[0]}")
+            print(f"Test set size: {X_test.shape[0]}")
+            pbar.update(1)
+            
+            # Train model
+            pbar.set_description("Training XGBoost model")
+            metrics = self.train_model(X_train, y_train, X_test, y_test)
+            pbar.update(1)
         
         return metrics
 
@@ -517,9 +600,9 @@ def main():
             random_state=args.random_state
         )
         
-        # Generate plots
+        # Generate plots and save predictions
         if trainer.model is not None:
-            print("Generating plots...")
+            print("Generating plots and saving predictions...")
             
             # Feature importance plot
             importance_path = output_dir / f"feature_importance_{args.dataset_name}.png"
@@ -535,6 +618,12 @@ def main():
             
             predictions_path = output_dir / f"predictions_{args.dataset_name}.png"
             trainer.plot_predictions(X_test, y_test, str(predictions_path))
+            
+            # Save detailed predictions to CSV
+            if 'y_test_actual' in metrics and 'y_test_pred_actual' in metrics:
+                predictions_csv_path = output_dir / f"detailed_predictions_{args.dataset_name}.csv"
+                trainer.save_predictions(metrics['y_test_actual'], metrics['y_test_pred_actual'], 
+                                       str(predictions_csv_path))
         
         print(f"\nResults saved to: {output_dir}")
         print("Training completed successfully!")
