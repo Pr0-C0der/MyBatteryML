@@ -127,8 +127,10 @@ class ChemistryStatisticalTrainer:
         # Statistical measures to calculate
         self.statistical_measures = ['mean', 'std', 'min', 'max', 'median', 'q25', 'q75', 'skewness', 'kurtosis']
         
-        # Initialize RMSE tracking
+        # Initialize metric tracking files
         self.rmse_file = self.output_dir / "RMSE.csv"
+        self.mae_file = self.output_dir / "MAE.csv"
+        self.mape_file = self.output_dir / "MAPE.csv"
         
         # Create output subdirectories (only battery level now)
         self.battery_level_dir = self.output_dir / self.chemistry_name / 'battery_level'
@@ -603,19 +605,18 @@ class ChemistryStatisticalTrainer:
 
         return models
 
-    def _save_rmse_results(self, results: Dict[str, float], model_type: str, features: List[str], 
-                          window_size: int = None, tune: bool = False, cv_splits: int = 5):
-        """Save RMSE results to CSV file with simple format: rows=models, columns=datasets."""
-        # Round RMSE values to 2 decimal places
+    def _save_metric_results(self, results: Dict[str, float], metric_file: Path, metric_name: str):
+        """Save metric results to CSV file with simple format: rows=models, columns=datasets."""
+        # Round values to 2 decimal places
         rounded_results = {k: round(v, 2) for k, v in results.items()}
         
         # Create DataFrame with chemistry as column
         df = pd.DataFrame({self.chemistry_name: rounded_results})
         
         # Append to existing CSV or create new one
-        if self.rmse_file.exists() and self.rmse_file.stat().st_size > 0:
+        if metric_file.exists() and metric_file.stat().st_size > 0:
             try:
-                existing_df = pd.read_csv(self.rmse_file, index_col=0)
+                existing_df = pd.read_csv(metric_file, index_col=0)
                 # Update existing column or add new one
                 if self.chemistry_name in existing_df.columns:
                     # Update existing column
@@ -624,15 +625,30 @@ class ChemistryStatisticalTrainer:
                 else:
                     # Add new column
                     combined_df = existing_df.join(df, how='outer')
-                combined_df.to_csv(self.rmse_file)
+                combined_df.to_csv(metric_file)
             except (pd.errors.EmptyDataError, pd.errors.ParserError):
                 # File exists but is empty or corrupted, create new one
-                df.to_csv(self.rmse_file)
+                df.to_csv(metric_file)
         else:
-            df.to_csv(self.rmse_file)
+            df.to_csv(metric_file)
         
         if self.verbose:
-            print(f"RMSE results saved to {self.rmse_file}")
+            print(f"{metric_name} results saved to {metric_file}")
+
+    def _save_rmse_results(self, results: Dict[str, float], model_type: str, features: List[str], 
+                          window_size: int = None, tune: bool = False, cv_splits: int = 5):
+        """Save RMSE results to CSV file with simple format: rows=models, columns=datasets."""
+        self._save_metric_results(results, self.rmse_file, "RMSE")
+
+    def _save_mae_results(self, results: Dict[str, float], model_type: str, features: List[str], 
+                         window_size: int = None, tune: bool = False, cv_splits: int = 5):
+        """Save MAE results to CSV file with simple format: rows=models, columns=datasets."""
+        self._save_metric_results(results, self.mae_file, "MAE")
+
+    def _save_mape_results(self, results: Dict[str, float], model_type: str, features: List[str], 
+                          window_size: int = None, tune: bool = False, cv_splits: int = 5):
+        """Save MAPE results to CSV file with simple format: rows=models, columns=datasets."""
+        self._save_metric_results(results, self.mape_file, "MAPE")
 
     def train_battery_level(self, tune: bool = False, cv_splits: int = 5) -> Dict[str, float]:
         """Train battery-level RUL prediction models using statistical features."""
@@ -705,7 +721,10 @@ class ChemistryStatisticalTrainer:
         models = self._build_models(use_gpu=self.use_gpu)
         
         # Train models
-        results = {}
+        rmse_results = {}
+        mae_results = {}
+        mape_results = {}
+        
         for name, pipe in tqdm(models.items(), desc="Training battery-level models", unit="model"):
             if self.verbose:
                 print(f"Training battery-level {name}...")
@@ -730,22 +749,39 @@ class ChemistryStatisticalTrainer:
                     y_test_actual = np.exp(y_test) - 1
                     y_pred_actual = np.exp(y_pred) - 1
                     
+                    # Calculate all three metrics
                     rmse = mean_squared_error(y_test_actual, y_pred_actual) ** 0.5
-                    results[name] = rmse
+                    mae = mean_absolute_error(y_test_actual, y_pred_actual)
+                    
+                    # Calculate MAPE (Mean Absolute Percentage Error)
+                    # Avoid division by zero by adding small epsilon
+                    epsilon = 1e-8
+                    mape = np.mean(np.abs((y_test_actual - y_pred_actual) / (y_test_actual + epsilon))) * 100
+                    
+                    rmse_results[name] = rmse
+                    mae_results[name] = mae
+                    mape_results[name] = mape
+                    
                     if self.verbose:
-                        print(f"Battery-level {name} RMSE: {rmse:.3f}")
+                        print(f"Battery-level {name} RMSE: {rmse:.3f}, MAE: {mae:.3f}, MAPE: {mape:.3f}%")
                 else:
-                    results[name] = 0.0  # No test set available
+                    rmse_results[name] = 0.0  # No test set available
+                    mae_results[name] = 0.0
+                    mape_results[name] = 0.0
                 
             except Exception as e:
                 if self.verbose:
                     print(f"Error training {name}: {e}")
-                results[name] = np.inf
+                rmse_results[name] = np.inf
+                mae_results[name] = np.inf
+                mape_results[name] = np.inf
         
-        # Save RMSE results to CSV
-        self._save_rmse_results(results, "battery_level", feature_names, tune=tune, cv_splits=cv_splits)
+        # Save all metric results to CSV files
+        self._save_rmse_results(rmse_results, "battery_level", feature_names, tune=tune, cv_splits=cv_splits)
+        self._save_mae_results(mae_results, "battery_level", feature_names, tune=tune, cv_splits=cv_splits)
+        self._save_mape_results(mape_results, "battery_level", feature_names, tune=tune, cv_splits=cv_splits)
         
-        return results
+        return rmse_results
 
     def _tune_hyperparameters(self, pipe: Pipeline, name: str, X_train: np.ndarray, 
                              y_train: np.ndarray, cv_splits: int) -> Optional[Dict]:

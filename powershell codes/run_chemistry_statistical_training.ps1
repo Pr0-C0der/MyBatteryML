@@ -13,8 +13,8 @@ param(
     [switch]$UseGPU = $false,
     [switch]$Tune = $false,
     [int]$CvSplits = 5,
-    [double]$TrainTestRatio = 0.7,
-    [switch]$Verbose = $false
+    [double]$TrainTestRatio = 0.7
+    # [switch]$Verbose = $false
 )
 
 # Set default chemistry paths if not provided
@@ -87,9 +87,8 @@ if ($Tune) {
     $CommandArgs += "--tune"
 }
 
-if ($Verbose) {
-    $CommandArgs += "--verbose"
-}
+$CommandArgs += "--verbose"
+
 
 # Run training for each chemistry
 $TotalChemistries = $ChemistryFolders.Count
@@ -130,17 +129,52 @@ Write-Host "Chemistry-Specific Statistical Training Complete!" -ForegroundColor 
 Write-Host "Results saved to: $OutputDir" -ForegroundColor Yellow
 
 # Show summary of results
+Write-Host ""
+Write-Host "Results Summary:" -ForegroundColor Green
+Write-Host "===============" -ForegroundColor Green
+
+# RMSE Results
 if (Test-Path "$OutputDir/RMSE.csv") {
     Write-Host ""
-    Write-Host "RMSE Results Summary:" -ForegroundColor Green
-    Write-Host "===================" -ForegroundColor Green
+    Write-Host "RMSE Results:" -ForegroundColor Cyan
+    Write-Host "============" -ForegroundColor Cyan
     
     try {
-        $Results = Import-Csv "$OutputDir/RMSE.csv"
-        $Results | Format-Table -AutoSize
+        $RMSE_Results = Import-Csv "$OutputDir/RMSE.csv"
+        $RMSE_Results | Format-Table -AutoSize
     }
     catch {
-        Write-Host "Could not display results summary" -ForegroundColor Yellow
+        Write-Host "Could not display RMSE results summary" -ForegroundColor Yellow
+    }
+}
+
+# MAE Results
+if (Test-Path "$OutputDir/MAE.csv") {
+    Write-Host ""
+    Write-Host "MAE Results:" -ForegroundColor Cyan
+    Write-Host "===========" -ForegroundColor Cyan
+    
+    try {
+        $MAE_Results = Import-Csv "$OutputDir/MAE.csv"
+        $MAE_Results | Format-Table -AutoSize
+    }
+    catch {
+        Write-Host "Could not display MAE results summary" -ForegroundColor Yellow
+    }
+}
+
+# MAPE Results
+if (Test-Path "$OutputDir/MAPE.csv") {
+    Write-Host ""
+    Write-Host "MAPE Results (%):" -ForegroundColor Cyan
+    Write-Host "================" -ForegroundColor Cyan
+    
+    try {
+        $MAPE_Results = Import-Csv "$OutputDir/MAPE.csv"
+        $MAPE_Results | Format-Table -AutoSize
+    }
+    catch {
+        Write-Host "Could not display MAPE results summary" -ForegroundColor Yellow
     }
 }
 

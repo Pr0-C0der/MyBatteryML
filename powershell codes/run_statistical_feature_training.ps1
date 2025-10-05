@@ -100,7 +100,7 @@ function Run-Training {
         }
     }
     catch {
-        Write-Host "`n❌ Error running training for $DatasetName: $($_.Exception.Message)" -ForegroundColor Red
+        Write-Host "`n❌ Error running training for $DatasetName`: $($_.Exception.Message)" -ForegroundColor Red
         return $false
     }
 }
@@ -144,6 +144,62 @@ function Run-AllDatasets {
         $Status = if ($Results[$Dataset]) { "✅ Success" } else { "❌ Failed" }
         $Color = if ($Results[$Dataset]) { "Green" } else { "Red" }
         Write-Host "  $Dataset : $Status" -ForegroundColor $Color
+    }
+    
+    # Show metric results summary
+    Write-Host "`n=========================================" -ForegroundColor Green
+    Write-Host "METRIC RESULTS SUMMARY" -ForegroundColor Green
+    Write-Host "=========================================" -ForegroundColor Green
+    
+    # RMSE Results
+    if (Test-Path "$OutputDir/RMSE.csv") {
+        Write-Host "`nRMSE Results:" -ForegroundColor Cyan
+        Write-Host "============" -ForegroundColor Cyan
+        
+        try {
+            $RMSE_Results = Import-Csv "$OutputDir/RMSE.csv"
+            $RMSE_Results | Format-Table -AutoSize
+        }
+        catch {
+            Write-Host "Could not display RMSE results summary" -ForegroundColor Yellow
+        }
+    }
+    else {
+        Write-Host "RMSE.csv not found in output directory" -ForegroundColor Yellow
+    }
+
+    # MAE Results
+    if (Test-Path "$OutputDir/MAE.csv") {
+        Write-Host "`nMAE Results:" -ForegroundColor Cyan
+        Write-Host "===========" -ForegroundColor Cyan
+        
+        try {
+            $MAE_Results = Import-Csv "$OutputDir/MAE.csv"
+            $MAE_Results | Format-Table -AutoSize
+        }
+        catch {
+            Write-Host "Could not display MAE results summary" -ForegroundColor Yellow
+        }
+    }
+    else {
+        Write-Host "MAE.csv not found in output directory" -ForegroundColor Yellow
+    }
+
+    # MAPE Results
+    if (Test-Path "$OutputDir/MAPE.csv") {
+        Write-Host "`nMAPE Results (%):" -ForegroundColor Cyan
+        Write-Host "================" -ForegroundColor Cyan
+        
+        try {
+            $MAPE_Results = Import-Csv "$OutputDir/MAPE.csv"
+            $MAPE_Results | Format-Table -AutoSize
+        }
+        catch {
+            Write-Host "Could not display MAPE results summary" -ForegroundColor Yellow
+        }
+    }
+    else {
+        Write-Host "MAPE.csv not found in output directory" -ForegroundColor Yellow
     }
 }
 
@@ -217,6 +273,62 @@ else {
     
     if ($Success) {
         Write-Host "`n🎉 All training completed successfully!" -ForegroundColor Green
+        
+        # Show metric results summary for single dataset
+        Write-Host "`n=========================================" -ForegroundColor Green
+        Write-Host "METRIC RESULTS SUMMARY" -ForegroundColor Green
+        Write-Host "=========================================" -ForegroundColor Green
+        
+        # RMSE Results
+        if (Test-Path "$OutputDir/RMSE.csv") {
+            Write-Host "`nRMSE Results:" -ForegroundColor Cyan
+            Write-Host "============" -ForegroundColor Cyan
+            
+            try {
+                $RMSE_Results = Import-Csv "$OutputDir/RMSE.csv"
+                $RMSE_Results | Format-Table -AutoSize
+            }
+            catch {
+                Write-Host "Could not display RMSE results summary" -ForegroundColor Yellow
+            }
+        }
+        else {
+            Write-Host "RMSE.csv not found in output directory" -ForegroundColor Yellow
+        }
+
+        # MAE Results
+        if (Test-Path "$OutputDir/MAE.csv") {
+            Write-Host "`nMAE Results:" -ForegroundColor Cyan
+            Write-Host "===========" -ForegroundColor Cyan
+            
+            try {
+                $MAE_Results = Import-Csv "$OutputDir/MAE.csv"
+                $MAE_Results | Format-Table -AutoSize
+            }
+            catch {
+                Write-Host "Could not display MAE results summary" -ForegroundColor Yellow
+            }
+        }
+        else {
+            Write-Host "MAE.csv not found in output directory" -ForegroundColor Yellow
+        }
+
+        # MAPE Results
+        if (Test-Path "$OutputDir/MAPE.csv") {
+            Write-Host "`nMAPE Results (%):" -ForegroundColor Cyan
+            Write-Host "================" -ForegroundColor Cyan
+            
+            try {
+                $MAPE_Results = Import-Csv "$OutputDir/MAPE.csv"
+                $MAPE_Results | Format-Table -AutoSize
+            }
+            catch {
+                Write-Host "Could not display MAPE results summary" -ForegroundColor Yellow
+            }
+        }
+        else {
+            Write-Host "MAPE.csv not found in output directory" -ForegroundColor Yellow
+        }
     }
     else {
         Write-Host "`n💥 Training failed!" -ForegroundColor Red
