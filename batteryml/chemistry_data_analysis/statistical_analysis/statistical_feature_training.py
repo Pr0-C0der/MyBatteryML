@@ -168,6 +168,16 @@ class StatisticalFeatureTrainer:
                     continue
         
         correlation_df = pd.DataFrame(correlations)
+        
+        if correlation_df.empty:
+            print("Warning: No correlations were calculated. This might indicate:")
+            print("  - No valid features found in the data")
+            print("  - All correlations resulted in NaN values")
+            print("  - Data format issues")
+            print(f"Available columns in data: {list(data.columns)}")
+            print(f"Feature columns found: {feature_cols}")
+            return correlation_df
+        
         correlation_df = correlation_df.sort_values('abs_correlation', ascending=False)
         
         return correlation_df
@@ -184,6 +194,16 @@ class StatisticalFeatureTrainer:
             List of selected feature names
         """
         print(f"Selecting top {n_features} features with highest correlation to RUL...")
+        
+        if correlation_df.empty:
+            print("Error: No correlations available to select features from.")
+            print("This usually means no valid correlations were calculated.")
+            return []
+        
+        if 'abs_correlation' not in correlation_df.columns:
+            print("Error: 'abs_correlation' column not found in correlation DataFrame.")
+            print(f"Available columns: {list(correlation_df.columns)}")
+            return []
         
         top_features = correlation_df.head(n_features)['feature'].tolist()
         
@@ -504,6 +524,10 @@ class StatisticalFeatureTrainer:
             # Select top features
             pbar.set_description("Selecting top features")
             self.feature_names = self.select_top_features(correlation_df, n_features)
+            
+            if not self.feature_names:
+                raise ValueError("No features could be selected. Check correlation calculation results.")
+            
             pbar.update(1)
             
             # Prepare training data
