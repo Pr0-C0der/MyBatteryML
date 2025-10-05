@@ -3,25 +3,27 @@
 Statistical Feature Training for RUL Prediction
 
 This script:
-1. Calculates feature-RUL correlations for a dataset
-2. Selects the top 15 features with highest absolute correlation to RUL
-3. Trains XGBoost on these features to predict RUL
-4. Uses 70/30 train/test split
-5. Reports RMSE, MAE, and MAPE metrics
+1. Loads battery data and extracts cycle features
+2. Calculates RUL labels for each cycle
+3. Computes statistical features for each battery
+4. Finds correlations between statistical features and RUL
+5. Selects top features and trains XGBoost model
+6. Evaluates performance and generates plots
 """
 
 import pandas as pd
 import numpy as np
 import argparse
 from pathlib import Path
-from typing import List, Tuple, Dict
+from typing import List, Tuple, Dict, Optional
 import warnings
 from sklearn.model_selection import train_test_split
-from sklearn.metrics import mean_squared_error, mean_absolute_error
+from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
 import xgboost as xgb
 import matplotlib.pyplot as plt
 import seaborn as sns
 from tqdm import tqdm
+from scipy.stats import spearmanr
 
 # Import necessary modules from the parent package
 import sys
@@ -29,8 +31,8 @@ from pathlib import Path
 sys.path.append(str(Path(__file__).parent.parent.parent.parent))
 
 from batteryml.data.battery_data import BatteryData
-from batteryml.chemistry_data_analysis.cycle_features import extract_cycle_features
-from feature_rul_correlation import FeatureRULCorrelationAnalyzer
+from batteryml.chemistry_data_analysis.cycle_features import get_extractor_class, DatasetSpecificCycleFeatures
+from batteryml.label.rul import RULLabelAnnotator
 
 # Suppress warnings
 warnings.filterwarnings('ignore')
@@ -46,163 +48,323 @@ class StatisticalFeatureTrainer:
         Args:
             data_dir: Base directory containing the data
         """
-        self.data_dir = data_dir
-        self.correlation_analyzer = FeatureRULCorrelationAnalyzer(data_dir)
+        self.data_dir = Path(data_dir)
+        self.rul_annotator = RULLabelAnnotator()
         self.model = None
         self.feature_names = None
         self.correlations = None
         
-    def load_and_extract_features(self, dataset_name: str, cycle_limit: int = None) -> pd.DataFrame:
+        # Define cycle features to extract
+        self.cycle_feature_names = [
+            'avg_voltage', 'avg_current', 'avg_c_rate', 'cycle_length',
+            'max_charge_capacity', 'max_discharge_capacity',
+            'charge_cycle_length', 'discharge_cycle_length',
+            'avg_charge_c_rate', 'avg_discharge_c_rate', 'max_charge_c_rate',
+            'avg_charge_capacity', 'avg_discharge_capacity',
+            'power_during_charge_cycle', 'power_during_discharge_cycle',
+            'charge_to_discharge_time_ratio'
+        ]
+        
+        # Statistical measures to calculate
+        self.statistical_measures = ['mean', 'std', 'min', 'max', 'median', 'q25', 'q75']
+        
+    def load_battery_data(self, dataset_name: str, cycle_limit: Optional[int] = None) -> pd.DataFrame:
         """
-        Load battery data and extract cycle features using the correlation analyzer.
+        Load battery data for the specified dataset.
         
         Args:
             dataset_name: Name of the dataset
             cycle_limit: Maximum number of cycles to use (None for all)
             
         Returns:
-            DataFrame with cycle features
+            DataFrame containing battery data with cycle features
         """
-        print(f"Loading and extracting features for dataset: {dataset_name}")
+        print(f"Loading battery data for dataset: {dataset_name}")
         
-        # Use the correlation analyzer to load data
-        data = self.correlation_analyzer.load_battery_data(dataset_name)
+        data_path = self.data_dir / dataset_name
+        
+        if not data_path.exists():
+            raise FileNotFoundError(f"Dataset directory not found: {data_path}")
+        
+        # Load all battery files in the dataset
+        battery_files = list(data_path.glob("*.pkl"))
+        if not battery_files:
+            raise FileNotFoundError(f"No PKL files found in {data_path}")
+        
+        all_cycle_data = []
+        
+        for file_path in tqdm(battery_files, desc="Loading batteries", unit="battery"):
+            try:
+                # Load battery data
+                battery = BatteryData.load(file_path)
+                
+                # Extract cycle features
+                cycle_data = self._extract_cycle_features(battery, dataset_name)
+                
+                if not cycle_data.empty:
+                    cycle_data['battery_id'] = battery.cell_id
+                    all_cycle_data.append(cycle_data)
+                    
+            except Exception as e:
+                print(f"Warning: Could not load {file_path}: {e}")
+                continue
+        
+        if not all_cycle_data:
+            raise ValueError(f"No valid battery data found in {data_path}")
+        
+        # Combine all data
+        data = pd.concat(all_cycle_data, ignore_index=True)
         
         # Apply cycle limit if specified
         if cycle_limit is not None:
             data = data[data['cycle_number'] <= cycle_limit]
         
+        print(f"Loaded {len(data)} cycle records from {data['battery_id'].nunique()} batteries")
         return data
     
-    def calculate_rul_labels(self, data: pd.DataFrame, dataset_name: str) -> pd.DataFrame:
+    def _extract_cycle_features(self, battery: BatteryData, dataset_name: str) -> pd.DataFrame:
         """
-        Calculate RUL labels for the battery data using the correlation analyzer.
+        Extract cycle features from battery data.
         
         Args:
-            data: DataFrame with cycle features
+            battery: BatteryData object
             dataset_name: Name of the dataset
             
         Returns:
-            DataFrame with RUL labels
+            DataFrame with cycle features
+        """
+        try:
+            # Try chemistry-specific extractor first
+            extractor_class = get_extractor_class(dataset_name)
+            if extractor_class is not None:
+                extractor = extractor_class()
+                rows = []
+                
+                for cycle in battery.cycle_data:
+                    row = {'cycle_number': cycle.cycle_number}
+                    
+                    for feature_name in self.cycle_feature_names:
+                        if hasattr(extractor, feature_name):
+                            try:
+                                value = getattr(extractor, feature_name)(battery, cycle)
+                                row[feature_name] = float(value) if value is not None and np.isfinite(float(value)) else np.nan
+                            except Exception:
+                                row[feature_name] = np.nan
+                        else:
+                            row[feature_name] = np.nan
+                    
+                    rows.append(row)
+                
+                return pd.DataFrame(rows)
+            else:
+                # Fall back to basic feature extraction
+                return self._extract_basic_features(battery)
+                
+        except Exception as e:
+            print(f"Warning: Chemistry-specific extractor failed: {e}")
+            return self._extract_basic_features(battery)
+    
+    def _extract_basic_features(self, battery: BatteryData) -> pd.DataFrame:
+        """
+        Extract basic cycle features as fallback.
+        
+        Args:
+            battery: BatteryData object
+            
+        Returns:
+            DataFrame with basic cycle features
+        """
+        rows = []
+        for cycle in battery.cycle_data:
+            if not cycle.discharge_capacity_in_Ah or not cycle.charge_capacity_in_Ah:
+                continue
+                
+            row = {
+                'cycle_number': cycle.cycle_number,
+                'avg_voltage': np.mean(cycle.voltage_in_V) if cycle.voltage_in_V is not None else np.nan,
+                'avg_current': np.mean(cycle.current_in_A) if cycle.current_in_A is not None else np.nan,
+                'cycle_length': len(cycle.voltage_in_V) if cycle.voltage_in_V is not None else 0,
+                'max_charge_capacity': cycle.charge_capacity_in_Ah,
+                'max_discharge_capacity': cycle.discharge_capacity_in_Ah,
+            }
+            
+            # Fill other features with NaN
+            for feature in self.cycle_feature_names:
+                if feature not in row:
+                    row[feature] = np.nan
+            
+            rows.append(row)
+        
+        return pd.DataFrame(rows)
+    
+    def calculate_rul_labels(self, data: pd.DataFrame) -> pd.DataFrame:
+        """
+        Calculate RUL labels for the battery data.
+        
+        Args:
+            data: DataFrame with cycle features
+            
+        Returns:
+            DataFrame with RUL labels added
         """
         print("Calculating RUL labels...")
-        print(f"Input data shape: {data.shape}")
-        print(f"Batteries in input data: {data['battery_id'].nunique()}")
         
-        # Use the correlation analyzer to calculate RUL labels
-        data_with_rul = self.correlation_analyzer.calculate_rul_labels(data, dataset_name)
+        data_with_rul = []
+        for battery_id, battery_data in data.groupby('battery_id'):
+            try:
+                # Calculate total cycles for this battery
+                max_cycle = battery_data['cycle_number'].max()
+                
+                # Calculate RUL for each cycle
+                battery_data = battery_data.copy()
+                battery_data['rul'] = max_cycle - battery_data['cycle_number']
+                
+                # Add log(RUL) for correlation analysis
+                battery_data['log_rul'] = np.log(battery_data['rul'] + 1)  # +1 to avoid log(0)
+                
+                data_with_rul.append(battery_data)
+                
+            except Exception as e:
+                print(f"Warning: Could not calculate RUL for battery {battery_id}: {e}")
+                continue
         
-        print(f"Output data shape: {data_with_rul.shape}")
-        print(f"Batteries in output data: {data_with_rul['battery_id'].nunique()}")
-        print(f"log_rul range: {data_with_rul['log_rul'].min():.3f} to {data_with_rul['log_rul'].max():.3f}")
+        if not data_with_rul:
+            raise ValueError("No valid RUL labels could be calculated")
         
-        return data_with_rul
+        result = pd.concat(data_with_rul, ignore_index=True)
+        print(f"RUL calculated for {result['battery_id'].nunique()} batteries")
+        print(f"log_rul range: {result['log_rul'].min():.3f} to {result['log_rul'].max():.3f}")
+        
+        return result
     
-    def calculate_correlations(self, data: pd.DataFrame) -> pd.DataFrame:
+    def calculate_statistical_features(self, data: pd.DataFrame) -> pd.DataFrame:
         """
-        Calculate correlations between battery-level aggregated features and RUL.
+        Calculate statistical features for each battery.
         
         Args:
             data: DataFrame with cycle features and RUL labels
             
         Returns:
+            DataFrame with statistical features
+        """
+        print("Calculating statistical features...")
+        
+        # Get feature columns (exclude metadata)
+        feature_cols = [col for col in data.columns 
+                       if col not in ['battery_id', 'cycle_number', 'log_rul', 'rul']]
+        
+        print(f"Processing {len(feature_cols)} features with {len(self.statistical_measures)} statistical measures")
+        
+        battery_stats = []
+        
+        for battery_id, battery_data in tqdm(data.groupby('battery_id'), desc="Processing batteries", unit="battery"):
+            try:
+                # Calculate statistical measures for each feature
+                battery_row = {'battery_id': battery_id}
+                
+                for feature in feature_cols:
+                    feature_values = battery_data[feature].dropna().values
+                    
+                    if len(feature_values) > 0:
+                        for measure in self.statistical_measures:
+                            stat_value = self._calculate_statistical_measure(feature_values, measure)
+                            battery_row[f"{feature}_{measure}"] = stat_value
+                    else:
+                        # Fill with NaN if no valid values
+                        for measure in self.statistical_measures:
+                            battery_row[f"{feature}_{measure}"] = np.nan
+                
+                # Add RUL information
+                rul_values = battery_data['log_rul'].dropna().values
+                if len(rul_values) > 0:
+                    battery_row['log_rul'] = np.mean(rul_values)
+                    battery_row['rul'] = np.exp(np.mean(rul_values)) - 1  # Convert back to actual RUL
+                    battery_stats.append(battery_row)
+                
+            except Exception as e:
+                print(f"Warning: Could not process battery {battery_id}: {e}")
+                continue
+        
+        if not battery_stats:
+            raise ValueError("No valid statistical features could be calculated")
+        
+        result = pd.DataFrame(battery_stats)
+        print(f"Statistical features calculated for {len(result)} batteries")
+        
+        return result
+    
+    def _calculate_statistical_measure(self, values: np.ndarray, measure: str) -> float:
+        """Calculate a statistical measure for given values."""
+        try:
+            if measure == 'mean':
+                return np.mean(values)
+            elif measure == 'std':
+                return np.std(values)
+            elif measure == 'min':
+                return np.min(values)
+            elif measure == 'max':
+                return np.max(values)
+            elif measure == 'median':
+                return np.median(values)
+            elif measure == 'q25':
+                return np.percentile(values, 25)
+            elif measure == 'q75':
+                return np.percentile(values, 75)
+            else:
+                return np.nan
+        except Exception:
+            return np.nan
+    
+    def calculate_correlations(self, data: pd.DataFrame) -> pd.DataFrame:
+        """
+        Calculate correlations between statistical features and RUL.
+        
+        Args:
+            data: DataFrame with statistical features
+            
+        Returns:
             DataFrame with correlation results
         """
-        print("Calculating battery-level feature-RUL correlations...")
+        print("Calculating feature-RUL correlations...")
         
-        # Debug: Check data structure
-        print(f"Data shape: {data.shape}")
-        print(f"Data columns: {list(data.columns)}")
-        print(f"Number of batteries: {data['battery_id'].nunique()}")
-        print(f"log_rul range: {data['log_rul'].min():.3f} to {data['log_rul'].max():.3f}")
-        
-        # Get feature columns (exclude metadata columns)
+        # Get feature columns (exclude metadata)
         feature_cols = [col for col in data.columns 
-                       if col not in ['battery_id', 'cycle_number', 'log_rul']]
+                       if col not in ['battery_id', 'log_rul', 'rul']]
         
-        # Statistical measures to calculate for each feature
-        statistical_measures = ['mean', 'std', 'min', 'max', 'median', 'q25', 'q75']
+        print(f"Calculating correlations for {len(feature_cols)} features")
         
         correlations = []
         
-        print(f"Calculating correlations for {len(feature_cols)} features with {len(statistical_measures)} statistical measures...")
-        print(f"Feature columns: {feature_cols[:5]}...")  # Show first 5 features
-        
         for feature in tqdm(feature_cols, desc="Calculating correlations", unit="feature"):
-            # Calculate correlations for each statistical measure
-            for measure in statistical_measures:
-                try:
-                    # Get battery-level aggregated values
-                    battery_features = []
-                    battery_ruls = []
-                    
-                    for battery_id, battery_data in data.groupby('battery_id'):
-                        feature_values = battery_data[feature].dropna().values
-                        rul_values = battery_data['log_rul'].dropna().values
-                        
-                        if len(feature_values) > 0 and len(rul_values) > 0:
-                            # Calculate statistical measure for this battery
-                            if measure == 'mean':
-                                stat_value = np.mean(feature_values)
-                            elif measure == 'std':
-                                stat_value = np.std(feature_values)
-                            elif measure == 'min':
-                                stat_value = np.min(feature_values)
-                            elif measure == 'max':
-                                stat_value = np.max(feature_values)
-                            elif measure == 'median':
-                                stat_value = np.median(feature_values)
-                            elif measure == 'q25':
-                                stat_value = np.percentile(feature_values, 25)
-                            elif measure == 'q75':
-                                stat_value = np.percentile(feature_values, 75)
-                            
-                            if not np.isnan(stat_value):
-                                battery_features.append(stat_value)
-                                # Use mean RUL for this battery
-                                battery_ruls.append(np.mean(rul_values))
-                    
-                    # Debug: Check if we have enough data for correlation
-                    if len(battery_features) < 2:
-                        if feature == feature_cols[0] and measure == statistical_measures[0]:  # Only print for first feature/measure
-                            print(f"Warning: Not enough battery data for correlation. Found {len(battery_features)} batteries with valid data.")
-                            print(f"  - Feature: {feature}")
-                            print(f"  - Measure: {measure}")
-                            print(f"  - Total batteries in dataset: {data['battery_id'].nunique()}")
-                    
-                    # Calculate correlation if we have enough data points
-                    if len(battery_features) > 1:
-                        from scipy.stats import spearmanr
-                        correlation, _ = spearmanr(battery_features, battery_ruls, nan_policy='omit')
-                        
-                        if not np.isnan(correlation):
-                            correlations.append({
-                                'feature': f"{feature}_{measure}",
-                                'base_feature': feature,
-                                'measure': measure,
-                                'correlation': correlation,
-                                'abs_correlation': abs(correlation)
-                            })
-                            
-                except Exception as e:
-                    print(f"Warning: Could not calculate correlation for {feature}_{measure}: {e}")
+            try:
+                # Get valid data points
+                valid_data = data[['log_rul', feature]].dropna()
+                
+                if len(valid_data) < 2:
                     continue
+                
+                # Calculate Spearman correlation
+                correlation, _ = spearmanr(valid_data['log_rul'], valid_data[feature], nan_policy='omit')
+                
+                if not np.isnan(correlation):
+                    correlations.append({
+                        'feature': feature,
+                        'correlation': correlation,
+                        'abs_correlation': abs(correlation),
+                        'n_samples': len(valid_data)
+                    })
+                    
+            except Exception as e:
+                print(f"Warning: Could not calculate correlation for {feature}: {e}")
+                continue
+        
+        if not correlations:
+            raise ValueError("No valid correlations could be calculated")
         
         correlation_df = pd.DataFrame(correlations)
-        
-        print(f"Total correlations calculated: {len(correlations)}")
-        
-        if correlation_df.empty:
-            print("Warning: No correlations were calculated. This might indicate:")
-            print("  - No valid features found in the data")
-            print("  - All correlations resulted in NaN values")
-            print("  - Data format issues")
-            print(f"Available columns in data: {list(data.columns)}")
-            print(f"Feature columns found: {feature_cols}")
-            return correlation_df
-        
         correlation_df = correlation_df.sort_values('abs_correlation', ascending=False)
         
+        print(f"Calculated {len(correlations)} valid correlations")
         return correlation_df
     
     def select_top_features(self, correlation_df: pd.DataFrame, n_features: int = 15) -> List[str]:
@@ -216,98 +378,40 @@ class StatisticalFeatureTrainer:
         Returns:
             List of selected feature names
         """
-        print(f"Selecting top {n_features} features with highest correlation to RUL...")
+        print(f"Selecting top {n_features} features...")
         
         if correlation_df.empty:
-            print("Error: No correlations available to select features from.")
-            print("This usually means no valid correlations were calculated.")
-            return []
-        
-        if 'abs_correlation' not in correlation_df.columns:
-            print("Error: 'abs_correlation' column not found in correlation DataFrame.")
-            print(f"Available columns: {list(correlation_df.columns)}")
-            return []
+            raise ValueError("No correlations available for feature selection")
         
         top_features = correlation_df.head(n_features)['feature'].tolist()
         
-        print(f"Selected features:")
+        print("Selected features:")
         for i, (_, row) in enumerate(correlation_df.head(n_features).iterrows(), 1):
-            print(f"  {i:2d}. {row['feature']:30s} (correlation: {row['correlation']:6.3f})")
+            print(f"  {i:2d}. {row['feature']:40s} (correlation: {row['correlation']:6.3f}, n={row['n_samples']})")
         
         return top_features
     
     def prepare_training_data(self, data: pd.DataFrame, feature_names: List[str]) -> Tuple[np.ndarray, np.ndarray]:
         """
-        Prepare training data with selected battery-level aggregated features.
+        Prepare training data with selected features.
         
         Args:
-            data: DataFrame with cycle features and RUL labels
-            feature_names: List of selected feature names (e.g., 'avg_voltage_mean', 'cycle_length_std')
+            data: DataFrame with statistical features
+            feature_names: List of selected feature names
             
         Returns:
             Tuple of (X, y) arrays
         """
-        print("Preparing battery-level training data...")
+        print("Preparing training data...")
         
-        # Create battery-level aggregated features
-        battery_features = []
-        battery_ruls = []
+        # Check if all features exist
+        missing_features = [f for f in feature_names if f not in data.columns]
+        if missing_features:
+            raise ValueError(f"Missing features: {missing_features}")
         
-        print(f"Creating battery-level features for {data['battery_id'].nunique()} batteries...")
-        
-        for battery_id, battery_data in tqdm(data.groupby('battery_id'), desc="Aggregating features", unit="battery"):
-            # Calculate aggregated features for this battery
-            battery_row = {}
-            
-            for feature_name in feature_names:
-                # Parse feature name (e.g., 'avg_voltage_mean' -> 'avg_voltage', 'mean')
-                if '_' in feature_name:
-                    base_feature, measure = feature_name.rsplit('_', 1)
-                else:
-                    base_feature = feature_name
-                    measure = 'mean'
-                
-                if base_feature in battery_data.columns:
-                    feature_values = battery_data[base_feature].dropna().values
-                    
-                    if len(feature_values) > 0:
-                        # Calculate the statistical measure
-                        if measure == 'mean':
-                            stat_value = np.mean(feature_values)
-                        elif measure == 'std':
-                            stat_value = np.std(feature_values)
-                        elif measure == 'min':
-                            stat_value = np.min(feature_values)
-                        elif measure == 'max':
-                            stat_value = np.max(feature_values)
-                        elif measure == 'median':
-                            stat_value = np.median(feature_values)
-                        elif measure == 'q25':
-                            stat_value = np.percentile(feature_values, 25)
-                        elif measure == 'q75':
-                            stat_value = np.percentile(feature_values, 75)
-                        else:
-                            stat_value = np.nan
-                        
-                        battery_row[feature_name] = stat_value
-                    else:
-                        battery_row[feature_name] = np.nan
-                else:
-                    battery_row[feature_name] = np.nan
-            
-            # Get RUL for this battery (use mean log_rul)
-            rul_values = battery_data['log_rul'].dropna().values
-            if len(rul_values) > 0:
-                battery_rul = np.mean(rul_values)
-                
-                # Only include if we have valid features and RUL
-                if not np.isnan(battery_rul) and not all(np.isnan(list(battery_row.values()))):
-                    battery_features.append(list(battery_row.values()))
-                    battery_ruls.append(battery_rul)
-        
-        # Convert to numpy arrays
-        X = np.array(battery_features)
-        y = np.array(battery_ruls)
+        # Prepare feature matrix
+        X = data[feature_names].values
+        y = data['log_rul'].values
         
         # Remove rows with NaN values
         valid_mask = ~(np.isnan(X).any(axis=1) | np.isnan(y))
@@ -331,10 +435,9 @@ class StatisticalFeatureTrainer:
             y_test: Test targets (log RUL)
             
         Returns:
-            Dictionary with evaluation metrics (calculated on actual RUL)
+            Dictionary with evaluation metrics
         """
         print("Training XGBoost model...")
-        print("Training on log(RUL), evaluating on actual RUL")
         
         # Initialize XGBoost regressor
         self.model = xgb.XGBRegressor(
@@ -345,35 +448,36 @@ class StatisticalFeatureTrainer:
             colsample_bytree=0.8,
             random_state=42,
             n_jobs=-1,
-            verbosity=1  # Enable progress output
+            verbosity=1
         )
         
-        # Train the model with progress bar
-        print("Training XGBoost model (this may take a few minutes)...")
+        # Train the model
         self.model.fit(X_train, y_train)
         
-        # Make predictions (these are log RUL predictions)
-        y_train_pred_log = self.model.predict(X_train)
-        y_test_pred_log = self.model.predict(X_test)
+        # Make predictions
+        y_train_pred = self.model.predict(X_train)
+        y_test_pred = self.model.predict(X_test)
         
-        # Convert predictions and targets to actual RUL for evaluation
-        y_train_actual = np.exp(y_train)  # Convert log RUL to actual RUL
-        y_test_actual = np.exp(y_test)    # Convert log RUL to actual RUL
-        y_train_pred_actual = np.exp(y_train_pred_log)  # Convert log RUL predictions to actual RUL
-        y_test_pred_actual = np.exp(y_test_pred_log)    # Convert log RUL predictions to actual RUL
+        # Convert to actual RUL for evaluation
+        y_train_actual = np.exp(y_train)
+        y_test_actual = np.exp(y_test)
+        y_train_pred_actual = np.exp(y_train_pred)
+        y_test_pred_actual = np.exp(y_test_pred)
         
-        # Calculate metrics on actual RUL
+        # Calculate metrics
         train_rmse = np.sqrt(mean_squared_error(y_train_actual, y_train_pred_actual))
         test_rmse = np.sqrt(mean_squared_error(y_test_actual, y_test_pred_actual))
         
         train_mae = mean_absolute_error(y_train_actual, y_train_pred_actual)
         test_mae = mean_absolute_error(y_test_actual, y_test_pred_actual)
         
-        # Calculate MAPE on actual RUL
         train_mape = np.mean(np.abs((y_train_actual - y_train_pred_actual) / y_train_actual)) * 100
         test_mape = np.mean(np.abs((y_test_actual - y_test_pred_actual) / y_test_actual)) * 100
         
-        # Print detailed results
+        train_r2 = r2_score(y_train_actual, y_train_pred_actual)
+        test_r2 = r2_score(y_test_actual, y_test_pred_actual)
+        
+        # Print results
         print("\n" + "="*60)
         print("EVALUATION RESULTS (on actual RUL)")
         print("="*60)
@@ -383,33 +487,29 @@ class StatisticalFeatureTrainer:
         print(f"Test MAE:      {test_mae:.2f} cycles")
         print(f"Training MAPE: {train_mape:.2f}%")
         print(f"Test MAPE:     {test_mape:.2f}%")
+        print(f"Training R²:   {train_r2:.3f}")
+        print(f"Test R²:       {test_r2:.3f}")
         print("="*60)
         
-        metrics = {
+        return {
             'train_rmse': train_rmse,
             'test_rmse': test_rmse,
             'train_mae': train_mae,
             'test_mae': test_mae,
             'train_mape': train_mape,
-            'test_mape': test_mape
+            'test_mape': test_mape,
+            'train_r2': train_r2,
+            'test_r2': test_r2
         }
-        
-        return metrics
     
-    def plot_feature_importance(self, output_path: str = None):
-        """
-        Plot feature importance from the trained model.
-        
-        Args:
-            output_path: Path to save the plot (optional)
-        """
+    def plot_feature_importance(self, output_path: Optional[str] = None):
+        """Plot feature importance from the trained model."""
         if self.model is None:
             print("No model trained yet!")
             return
         
         print("Plotting feature importance...")
         
-        # Get feature importance
         importance = self.model.feature_importances_
         feature_names = self.feature_names
         
@@ -420,11 +520,11 @@ class StatisticalFeatureTrainer:
         }).sort_values('importance', ascending=True)
         
         # Create plot
-        plt.figure(figsize=(10, 8))
+        plt.figure(figsize=(12, 8))
         bars = plt.barh(range(len(importance_df)), importance_df['importance'])
         plt.yticks(range(len(importance_df)), importance_df['feature'])
         plt.xlabel('Feature Importance')
-        plt.title('XGBoost Feature Importance (Top 15 Correlated Features)')
+        plt.title('XGBoost Feature Importance (Top Correlated Features)')
         plt.grid(True, alpha=0.3)
         
         # Add value labels on bars
@@ -444,27 +544,19 @@ class StatisticalFeatureTrainer:
         plt.close()
     
     def plot_predictions(self, X_test: np.ndarray, y_test: np.ndarray, 
-                        output_path: str = None):
-        """
-        Plot actual vs predicted RUL values.
-        
-        Args:
-            X_test: Test features
-            y_test: Test targets (log RUL)
-            output_path: Path to save the plot (optional)
-        """
+                        output_path: Optional[str] = None):
+        """Plot actual vs predicted RUL values."""
         if self.model is None:
             print("No model trained yet!")
             return
         
         print("Plotting predictions...")
         
-        # Make predictions (these are log RUL predictions)
-        y_test_pred_log = self.model.predict(X_test)
+        y_test_pred = self.model.predict(X_test)
         
         # Convert to actual RUL for plotting
-        y_test_actual = np.exp(y_test)  # Convert log RUL to actual RUL
-        y_test_pred_actual = np.exp(y_test_pred_log)  # Convert log RUL predictions to actual RUL
+        y_test_actual = np.exp(y_test)
+        y_test_pred_actual = np.exp(y_test_pred)
         
         # Create plot
         plt.figure(figsize=(10, 8))
@@ -482,7 +574,6 @@ class StatisticalFeatureTrainer:
         plt.grid(True, alpha=0.3)
         
         # Add R² score
-        from sklearn.metrics import r2_score
         r2 = r2_score(y_test_actual, y_test_pred_actual)
         plt.text(0.05, 0.95, f'R² = {r2:.3f}', transform=plt.gca().transAxes, 
                 bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
@@ -497,7 +588,7 @@ class StatisticalFeatureTrainer:
         
         plt.close()
     
-    def train_and_evaluate(self, dataset_name: str, cycle_limit: int = None, 
+    def train_and_evaluate(self, dataset_name: str, cycle_limit: Optional[int] = None, 
                           n_features: int = 15, test_size: float = 0.3,
                           random_state: int = 42) -> Dict[str, float]:
         """
@@ -516,80 +607,29 @@ class StatisticalFeatureTrainer:
         print(f"Starting statistical feature training for dataset: {dataset_name}")
         print("=" * 60)
         
-        # Create progress bar for main steps
-        main_steps = [
-            "Loading and extracting features",
-            "Calculating RUL labels", 
-            "Calculating correlations",
-            "Selecting top features",
-            "Preparing training data",
-            "Training XGBoost model"
-        ]
+        # Load and process data
+        data = self.load_battery_data(dataset_name, cycle_limit)
+        data_with_rul = self.calculate_rul_labels(data)
+        statistical_data = self.calculate_statistical_features(data_with_rul)
         
-        with tqdm(total=len(main_steps), desc="Training Pipeline", unit="step") as pbar:
-            # Load and extract features
-            pbar.set_description("Loading and extracting features")
-            data = self.load_and_extract_features(dataset_name, cycle_limit)
-            print(f"Loaded {len(data)} cycle records from {data['battery_id'].nunique()} batteries")
-            pbar.update(1)
-            
-            # Calculate RUL labels
-            pbar.set_description("Calculating RUL labels")
-            data_with_rul = self.calculate_rul_labels(data, dataset_name)
-            pbar.update(1)
-            
-            # Calculate correlations
-            pbar.set_description("Calculating correlations")
-            correlation_df = self.calculate_correlations(data_with_rul)
-            self.correlations = correlation_df
-            pbar.update(1)
-            
-            # Select top features
-            pbar.set_description("Selecting top features")
-            self.feature_names = self.select_top_features(correlation_df, n_features)
-            
-            if not self.feature_names:
-                raise ValueError("No features could be selected. Check correlation calculation results.")
-            
-            pbar.update(1)
-            
-            # Prepare training data
-            pbar.set_description("Preparing training data")
-            X, y = self.prepare_training_data(data_with_rul, self.feature_names)
-            
-            # Split data
-            X_train, X_test, y_train, y_test = train_test_split(
-                X, y, test_size=test_size, random_state=random_state
-            )
-            
-            print(f"Training set size: {X_train.shape[0]}")
-            print(f"Test set size: {X_test.shape[0]}")
-            pbar.update(1)
-            
-            # Train model
-            pbar.set_description("Training XGBoost model")
-            metrics = self.train_model(X_train, y_train, X_test, y_test)
-            pbar.update(1)
+        # Calculate correlations and select features
+        correlation_df = self.calculate_correlations(statistical_data)
+        self.correlations = correlation_df
+        self.feature_names = self.select_top_features(correlation_df, n_features)
         
-        # Print results
-        print("\n" + "=" * 60)
-        print("TRAINING RESULTS")
-        print("=" * 60)
-        print(f"Dataset: {dataset_name}")
-        print(f"Features used: {len(self.feature_names)}")
-        print(f"Training samples: {X_train.shape[0]}")
-        print(f"Test samples: {X_test.shape[0]}")
-        print()
-        print("TRAINING METRICS:")
-        print(f"  RMSE: {metrics['train_rmse']:.3f}")
-        print(f"  MAE:  {metrics['train_mae']:.3f}")
-        print(f"  MAPE: {metrics['train_mape']:.2f}%")
-        print()
-        print("TEST METRICS:")
-        print(f"  RMSE: {metrics['test_rmse']:.3f}")
-        print(f"  MAE:  {metrics['test_mae']:.3f}")
-        print(f"  MAPE: {metrics['test_mape']:.2f}%")
-        print("=" * 60)
+        # Prepare training data
+        X, y = self.prepare_training_data(statistical_data, self.feature_names)
+        
+        # Split data
+        X_train, X_test, y_train, y_test = train_test_split(
+            X, y, test_size=test_size, random_state=random_state
+        )
+        
+        print(f"Training set size: {X_train.shape[0]}")
+        print(f"Test set size: {X_test.shape[0]}")
+        
+        # Train model
+        metrics = self.train_model(X_train, y_train, X_test, y_test)
         
         return metrics
 
@@ -610,7 +650,6 @@ def main():
                        help='Output directory for plots (default: statistical_training_results)')
     parser.add_argument('--random_state', '-r', type=int, default=42, 
                        help='Random state for reproducibility (default: 42)')
-    parser.add_argument('--verbose', '-v', action='store_true', help='Verbose output')
     
     args = parser.parse_args()
     
@@ -636,15 +675,14 @@ def main():
             print("Generating plots...")
             
             # Feature importance plot
-            print("  - Creating feature importance plot...")
             importance_path = output_dir / f"feature_importance_{args.dataset_name}.png"
             trainer.plot_feature_importance(str(importance_path))
             
-            # Predictions plot (need to reload test data)
-            print("  - Creating predictions plot...")
-            data = trainer.load_and_extract_features(args.dataset_name, args.cycle_limit)
-            data_with_rul = trainer.calculate_rul_labels(data, args.dataset_name)
-            X, y = trainer.prepare_training_data(data_with_rul, trainer.feature_names)
+            # Predictions plot
+            data = trainer.load_battery_data(args.dataset_name, args.cycle_limit)
+            data_with_rul = trainer.calculate_rul_labels(data)
+            statistical_data = trainer.calculate_statistical_features(data_with_rul)
+            X, y = trainer.prepare_training_data(statistical_data, trainer.feature_names)
             X_train, X_test, y_train, y_test = train_test_split(
                 X, y, test_size=args.test_size, random_state=args.random_state
             )
@@ -657,6 +695,8 @@ def main():
         
     except Exception as e:
         print(f"Error: {e}")
+        import traceback
+        traceback.print_exc()
         return 1
     
     return 0
