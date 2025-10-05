@@ -189,7 +189,7 @@ class FeatureRULCorrelationAnalyzer:
         
         all_cycle_data = []
         
-        for file_path in battery_files:
+        for file_path in tqdm(battery_files, desc=f"Loading batteries from {dataset_name}", unit="battery", leave=True):
             try:
                 # Load battery data using BatteryData.load()
                 battery = BatteryData.load(file_path)
@@ -304,7 +304,9 @@ class FeatureRULCorrelationAnalyzer:
         """
         # Group by battery and calculate RUL
         data_with_rul = []
-        for battery_id, battery_data in data.groupby('battery_id'):
+        battery_groups = list(data.groupby('battery_id'))
+        
+        for battery_id, battery_data in tqdm(battery_groups, desc="Calculating RUL labels", unit="battery", leave=True):
             try:
                 # Calculate total RUL for this battery
                 # Find the maximum cycle number for this battery
