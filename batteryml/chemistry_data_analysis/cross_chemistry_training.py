@@ -448,7 +448,19 @@ class CrossChemistryTrainer:
             print("Starting cross-chemistry training and evaluation...")
         
         # Prepare training data
-        X_train, y_train, feature_names = self._prepare_training_data()
+        try:
+            X_train, y_train, feature_names = self._prepare_training_data()
+        except Exception as e:
+            if self.verbose:
+                print(f"Error in _prepare_training_data: {e}")
+                print(f"Training chemistry path: {self.train_chemistry_path}")
+                print(f"Path exists: {self.train_chemistry_path.exists()}")
+                if self.train_chemistry_path.exists():
+                    files = list(self.train_chemistry_path.glob('*.pkl'))
+                    print(f"PKL files found: {len(files)}")
+                    if files:
+                        print(f"First few files: {files[:3]}")
+            raise
         
         # Build models
         models = self._build_models()
