@@ -554,7 +554,7 @@ def register_default_features(analyzer: ChemistryCorrelationAnalyzer):
         CycleScalarFeature('Average Voltage of Complete Cycle', 'avg_voltage', description='Mean voltage per cycle'),
         CycleScalarFeature('Average Current of Complete Cycle', 'avg_current', description='Mean current per cycle'),
         CycleScalarFeature('Average C-Rate of Complete Cycle', 'avg_c_rate', description='Average |I|/C per cycle'),
-        # CycleScalarFeature('max_discharge_capacity', 'max_discharge_capacity'),
+        CycleScalarFeature('Average Charge Capacity', 'avg_charge_capacity'),
         CycleScalarFeature('Max Charge Capacity', 'max_charge_capacity'),
         CycleScalarFeature('Charge Cycle Length', 'charge_cycle_length'),
         CycleScalarFeature('Discharge Cycle Length', 'discharge_cycle_length'),
