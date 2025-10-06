@@ -9,6 +9,7 @@ param(
     [int]$CycleLimit = 100,
     [string]$Smoothing = "hms",
     [int]$MaWindow = 5,
+    [string[]]$Features = @("avg_charge_capacity", "max_charge_capacity", "charge_cycle_length", "discharge_cycle_length", "cycle_length", "max_charge_c_rate", "avg_discharge_c_rate"),
     [switch]$UseGPU = $false,
     [switch]$Tune = $false,
     [int]$CvSplits = 5,
