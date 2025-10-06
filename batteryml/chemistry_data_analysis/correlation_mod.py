@@ -551,21 +551,22 @@ class ChemistryCorrelationAnalyzer:
 
 def register_default_features(analyzer: ChemistryCorrelationAnalyzer):
     specs = [
-        CycleScalarFeature('avg_voltage', 'avg_voltage', description='Mean voltage per cycle'),
-        CycleScalarFeature('avg_current', 'avg_current', description='Mean current per cycle'),
-        CycleScalarFeature('avg_c_rate', 'avg_c_rate', description='Average |I|/C per cycle'),
-        CycleScalarFeature('max_discharge_capacity', 'max_discharge_capacity'),
-        CycleScalarFeature('max_charge_capacity', 'max_charge_capacity'),
-        CycleScalarFeature('charge_cycle_length', 'charge_cycle_length'),
-        CycleScalarFeature('discharge_cycle_length', 'discharge_cycle_length'),
+        CycleScalarFeature('Average Voltage of Complete Cycle', 'avg_voltage', description='Mean voltage per cycle'),
+        CycleScalarFeature('Average Current of Complete Cycle', 'avg_current', description='Mean current per cycle'),
+        CycleScalarFeature('Average C-Rate of Complete Cycle', 'avg_c_rate', description='Average |I|/C per cycle'),
+        # CycleScalarFeature('max_discharge_capacity', 'max_discharge_capacity'),
+        CycleScalarFeature('Max Charge Capacity', 'max_charge_capacity'),
+        CycleScalarFeature('Charge Cycle Length', 'charge_cycle_length'),
+        CycleScalarFeature('Discharge Cycle Length', 'discharge_cycle_length'),
         # peak_cv_length intentionally omitted for now
-        CycleScalarFeature('cycle_length', 'cycle_length'),
-        CycleScalarFeature('energy_during_charge_cycle', 'power_during_charge_cycle'),
-        CycleScalarFeature('energy_during_discharge_cycle', 'power_during_discharge_cycle'),
-        CycleScalarFeature('avg_charge_c_rate', 'avg_charge_c_rate'),
-        CycleScalarFeature('max_charge_c_rate', 'max_charge_c_rate'),
-        CycleScalarFeature('avg_discharge_c_rate', 'avg_discharge_c_rate'),
-        CycleScalarFeature('charge_to_discharge_time_ratio', 'charge_to_discharge_time_ratio'),
+        CycleScalarFeature('Cycle Length', 'cycle_length'),
+        CycleScalarFeature('Energy During Charge Cycle', 'power_during_charge_cycle'),
+        CycleScalarFeature('Energy During Discharge Cycle', 'power_during_discharge_cycle'),
+        CycleScalarFeature('Average C-Rate of Charge Cycle', 'avg_charge_c_rate'),
+        CycleScalarFeature('Max C-Rate of Charge Cycle', 'max_charge_c_rate'),
+        CycleScalarFeature('Average C-Rate of Discharge Cycle', 'avg_discharge_c_rate'),
+        CycleScalarFeature('Max C-Rate of Discharge Cycle', 'max_discharge_c_rate'),
+        CycleScalarFeature('Charge/Discharge Time Ratio', 'charge_to_discharge_time_ratio'),
     ]
     for spec in specs:
         analyzer.register_feature(spec)
@@ -575,6 +576,173 @@ def build_default_analyzer(data_path: str, output_dir: str = 'chemistry_correlat
     analyzer = ChemistryCorrelationAnalyzer(data_path, output_dir, verbose=verbose, dataset_hint=dataset_hint, cycle_limit=cycle_limit, smoothing=smoothing, ma_window=ma_window, boxplot_only=boxplot_only)
     register_default_features(analyzer)
     return analyzer
+
+
+def plot_combined_chemistry_correlations(chemistry_dirs: List[str], output_dir: str = 'combined_chemistry_correlations', 
+                                        verbose: bool = False, dataset_hint: Optional[str] = None, 
+                                        cycle_limit: Optional[int] = None, smoothing: str = 'none', 
+                                        ma_window: int = 5):
+    """
+    Create combined correlation boxplots for multiple chemistries.
+    
+    Args:
+        chemistry_dirs: List of paths to chemistry directories (e.g., ['data_chemistries/lfp', 'data_chemistries/nmc'])
+        output_dir: Output directory for combined plots
+        verbose: Enable verbose logging
+        dataset_hint: Optional dataset name hint
+        cycle_limit: Limit analysis to first N cycles
+        smoothing: Smoothing method
+        ma_window: Window size for smoothing
+    """
+    output_path = Path(output_dir)
+    output_path.mkdir(parents=True, exist_ok=True)
+    
+    all_correlation_data = []
+    
+    # Process each chemistry
+    for chem_dir in chemistry_dirs:
+        chem_path = Path(chem_dir)
+        if not chem_path.exists():
+            if verbose:
+                print(f"[warn] Chemistry directory not found: {chem_dir}")
+            continue
+            
+        chemistry_name = chem_path.name
+        if verbose:
+            print(f"Processing chemistry: {chemistry_name}")
+        
+        # Create analyzer for this chemistry
+        analyzer = build_default_analyzer(
+            str(chem_path), 
+            str(output_path / chemistry_name), 
+            verbose=verbose, 
+            dataset_hint=dataset_hint, 
+            cycle_limit=cycle_limit, 
+            smoothing=smoothing, 
+            ma_window=ma_window, 
+            boxplot_only=True
+        )
+        
+        # Analyze dataset and collect correlation data
+        files = analyzer._battery_files()
+        chemistry_data = []
+        
+        for f in files:
+            try:
+                battery = BatteryData.load(f)
+                extractor = analyzer._get_extractor(f, battery)
+                df = analyzer.build_cycle_feature_matrix(f, battery, extractor)
+                chemistry_data.append((battery.cell_id, df))
+            except Exception as e:
+                if verbose:
+                    print(f"[warn] Failed to load {f}: {e}")
+                continue
+        
+        # Collect correlations for this chemistry
+        for feature in analyzer.features.keys():
+            for cell_id, df in chemistry_data:
+                val = analyzer._compute_feature_rul_corr(df, feature)
+                if val is not None and np.isfinite(val):
+                    all_correlation_data.append({
+                        'feature': feature,
+                        'correlation': float(val),
+                        'chemistry': chemistry_name
+                    })
+    
+    if not all_correlation_data:
+        if verbose:
+            print("[warn] No correlation data found for combined plot")
+        return
+    
+    # Create combined boxplot
+    df = pd.DataFrame(all_correlation_data)
+    
+    # Create subplots for each feature
+    features = df['feature'].unique()
+    n_features = len(features)
+    
+    # Calculate subplot layout
+    n_cols = min(3, n_features)
+    n_rows = (n_features + n_cols - 1) // n_cols
+    
+    fig, axes = plt.subplots(n_rows, n_cols, figsize=(5 * n_cols, 4 * n_rows))
+    if n_features == 1:
+        axes = [axes]
+    elif n_rows == 1:
+        axes = axes.reshape(1, -1)
+    
+    for idx, feature in enumerate(features):
+        row = idx // n_cols
+        col = idx % n_cols
+        ax = axes[row, col] if n_rows > 1 else axes[col]
+        
+        feature_data = df[df['feature'] == feature]
+        
+        # Create boxplot
+        chemistry_list = feature_data['chemistry'].unique()
+        box_data = [feature_data[feature_data['chemistry'] == chem]['correlation'].values 
+                   for chem in chemistry_list]
+        
+        bp = ax.boxplot(box_data, labels=chemistry_list, patch_artist=True)
+        
+        # Color the boxes
+        colors = plt.cm.Set3(np.linspace(0, 1, len(chemistry_list)))
+        for patch, color in zip(bp['boxes'], colors):
+            patch.set_facecolor(color)
+            patch.set_alpha(0.7)
+        
+        ax.axhline(0.0, color='red', linestyle='--', alpha=0.5)
+        ax.set_title(f'{feature}', fontsize=10)
+        ax.set_ylabel('Correlation with RUL')
+        ax.tick_params(axis='x', rotation=45)
+        ax.grid(True, alpha=0.3)
+    
+    # Hide empty subplots
+    for idx in range(n_features, n_rows * n_cols):
+        row = idx // n_cols
+        col = idx % n_cols
+        if n_rows > 1:
+            axes[row, col].set_visible(False)
+        else:
+            axes[col].set_visible(False)
+    
+    plt.suptitle('Feature-RUL Correlations Across All Chemistries', fontsize=16, y=0.98)
+    plt.tight_layout()
+    
+    # Save combined plot
+    combined_path = output_path / 'combined_chemistry_correlations_boxplot.png'
+    try:
+        plt.savefig(combined_path, dpi=300, bbox_inches='tight')
+        if verbose:
+            print(f"[ok] Combined correlation boxplot saved to {combined_path}")
+    except Exception as e:
+        if verbose:
+            print(f"[warn] Failed to save combined plot: {e}")
+    finally:
+        plt.close()
+    
+    # Also create a single combined boxplot with all features
+    plt.figure(figsize=(max(12, min(1.0 * n_features, 36)), 8))
+    sns.boxplot(data=df, x='feature', y='correlation', hue='chemistry')
+    plt.axhline(0.0, color='red', linestyle='--', alpha=0.5)
+    plt.ylabel('Correlation with RUL')
+    plt.xlabel('Feature')
+    plt.title('Feature-RUL Correlations: All Chemistries Combined')
+    plt.xticks(rotation=45, ha='right')
+    plt.legend(title='Chemistry', bbox_to_anchor=(1.05, 1), loc='upper left')
+    plt.tight_layout()
+    
+    # Save single combined plot
+    single_combined_path = output_path / 'all_features_combined_correlations.png'
+    try:
+        plt.savefig(single_combined_path, dpi=300, bbox_inches='tight')
+        if verbose:
+            print(f"[ok] Single combined plot saved to {single_combined_path}")
+    except Exception as e:
+        if verbose:
+            print(f"[warn] Failed to save single combined plot: {e}")
+    finally:
+        plt.close()
 
 
 def main():
