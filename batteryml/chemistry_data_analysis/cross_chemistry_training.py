@@ -68,7 +68,7 @@ class CrossChemistryTrainer:
                  output_dir: str = 'cross_chemistry_results', verbose: bool = False, 
                  dataset_hint: Optional[str] = None, cycle_limit: Optional[int] = None, 
                  smoothing: str = 'none', ma_window: int = 5, use_gpu: bool = False, 
-                 train_test_ratio: float = 0.7):
+                 train_test_ratio: float = 0.7, features: Optional[List[str]] = None):
         """
         Initialize cross-chemistry trainer.
         
@@ -94,6 +94,7 @@ class CrossChemistryTrainer:
         self.ma_window = int(ma_window) if int(ma_window) > 1 else 5
         self.use_gpu = bool(use_gpu)
         self.train_test_ratio = float(train_test_ratio)
+        self.features = features
         self.output_dir.mkdir(parents=True, exist_ok=True)
         
         # Chemistry names
@@ -211,7 +212,14 @@ class CrossChemistryTrainer:
         return X_train, y_train, feature_names
 
     def _get_available_features(self, files: List[Path]) -> List[str]:
-        """Get available features from the first valid battery, same approach as chemistry_training.py."""
+        """Get available features from the first valid battery or use custom features."""
+        # If custom features are provided, use them
+        if self.features is not None:
+            if self.verbose:
+                print(f"Using custom features: {self.features}")
+            return self.features
+        
+        # Otherwise, get features from the first valid battery
         for f in files:
             try:
                 battery = BatteryData.load(f)
@@ -337,6 +345,37 @@ class CrossChemistryTrainer:
         # Apply label transformation (same as chemistry_training.py)
         y_train_t, train_label_stats = _fit_label_transform(y_train)
         
+        # Normalize features
+        if self.verbose:
+            print("Normalizing features...")
+        
+        from sklearn.preprocessing import StandardScaler
+        feature_scaler = StandardScaler()
+        X_train_normalized = feature_scaler.fit_transform(X_train)
+        
+        if self.verbose:
+            print(f"Feature normalization applied. Shape: {X_train_normalized.shape}")
+        
+        # Prepare ALL test data ONCE (efficient approach)
+        if self.verbose:
+            print("Preparing test data for all chemistries...")
+        
+        test_data = {}
+        for test_chemistry_path in self.test_chemistry_paths:
+            X_test, y_test, chemistry_name = self._prepare_test_data(test_chemistry_path, feature_names)
+            
+            if X_test.size > 0:
+                # Normalize test features using the same scaler as training
+                X_test_normalized = feature_scaler.transform(X_test)
+                test_data[chemistry_name] = (X_test_normalized, y_test)
+                
+                if self.verbose:
+                    print(f"  {chemistry_name}: {X_test.shape[0]} samples (normalized)")
+            else:
+                test_data[chemistry_name] = (X_test, y_test)
+                if self.verbose:
+                    print(f"  {chemistry_name}: No test data available")
+        
         # Build models
         models = self._build_models()
         
@@ -353,21 +392,19 @@ class CrossChemistryTrainer:
                 print(f"Training {name}...")
             
             try:
-                # Train model
-                pipe.fit(X_train, y_train_t)
+                # Train model on normalized features
+                pipe.fit(X_train_normalized, y_train_t)
                 
                 # Initialize results for this model
                 model_rmse = {}
                 model_mae = {}
                 model_mape = {}
                 
-                # Evaluate on each test chemistry
-                for test_chemistry_path in self.test_chemistry_paths:
-                    X_test, y_test, chemistry_name = self._prepare_test_data(test_chemistry_path, feature_names)
-                    
+                # Evaluate on each test chemistry (using pre-processed data)
+                for chemistry_name, (X_test, y_test) in test_data.items():
                     if X_test.size == 0:
                         if self.verbose:
-                            print(f"No test data available for {chemistry_name}")
+                            print(f"  {chemistry_name}: No test data available")
                         model_rmse[chemistry_name] = np.nan
                         model_mae[chemistry_name] = np.nan
                         model_mape[chemistry_name] = np.nan
@@ -404,8 +441,7 @@ class CrossChemistryTrainer:
                 if self.verbose:
                     print(f"Error training {name}: {e}")
                 # Fill with NaN for all test chemistries
-                for test_chemistry_path in self.test_chemistry_paths:
-                    chemistry_name = test_chemistry_path.name
+                for chemistry_name in test_data.keys():
                     all_results['RMSE'][name] = {chemistry_name: np.nan}
                     all_results['MAE'][name] = {chemistry_name: np.nan}
                     all_results['MAPE'][name] = {chemistry_name: np.nan}
@@ -448,6 +484,8 @@ def main():
                        help='Number of cross-validation splits')
     parser.add_argument('--verbose', action='store_true',
                        help='Enable verbose logging')
+    parser.add_argument('--features', type=str, nargs='+', default=None,
+                       help='Custom features to use (e.g., avg_voltage avg_current)')
     
     args = parser.parse_args()
     
@@ -461,7 +499,8 @@ def main():
         cycle_limit=args.cycle_limit,
         smoothing=args.smoothing,
         ma_window=args.ma_window,
-        use_gpu=args.use_gpu
+        use_gpu=args.use_gpu,
+        features=args.features
     )
     
     # Train and evaluate
