@@ -204,8 +204,34 @@ class CrossChemistryTrainer:
         if not train_files:
             raise ValueError(f"No battery files found in {self.train_chemistry_path}")
         
-        all_battery_data = []
-        feature_names = set()
+        # Get feature names from first valid battery
+        feature_names = []
+        for f in train_files:
+            try:
+                battery = BatteryData.load(f)
+                dataset = self._infer_dataset_for_battery(battery)
+                if not dataset:
+                    continue
+                
+                extractor_class = get_extractor_class(dataset)
+                if extractor_class is None:
+                    continue
+                
+                extractor = extractor_class()
+                # Get all available features from the extractor
+                feature_methods = [method for method in dir(extractor) 
+                                 if not method.startswith('_') and callable(getattr(extractor, method))]
+                feature_names = feature_methods
+                break
+            except Exception:
+                continue
+        
+        if not feature_names:
+            raise ValueError("No valid feature extractor found")
+        
+        # Process all batteries using the same feature names
+        X_list = []
+        y_list = []
         
         for f in tqdm(train_files, desc="Processing training batteries", unit="battery"):
             try:
@@ -222,36 +248,27 @@ class CrossChemistryTrainer:
                 df = self._build_cycle_feature_matrix(battery, extractor)
                 
                 if not df.empty:
-                    # Collect feature names
-                    feature_names.update([col for col in df.columns if col not in ['cycle_number', 'rul']])
-                    all_battery_data.append((battery.cell_id, df))
+                    # Use consistent feature names
+                    feature_cols = [col for col in feature_names if col in df.columns]
+                    if not feature_cols:
+                        continue
+                    
+                    X = df[feature_cols].values
+                    y = df['rul'].values
+                    
+                    # Remove NaN values
+                    valid_mask = ~(np.isnan(X).any(axis=1) | np.isnan(y))
+                    X = X[valid_mask]
+                    y = y[valid_mask]
+                    
+                    if len(X) > 0:
+                        X_list.append(X)
+                        y_list.append(y)
                     
             except Exception as e:
                 if self.verbose:
                     print(f"Warning: Could not process {f}: {e}")
                 continue
-        
-        if not all_battery_data:
-            raise ValueError("No valid training data found")
-        
-        # Convert to arrays
-        X_list = []
-        y_list = []
-        
-        for cell_id, df in all_battery_data:
-            # Use all available features
-            feature_cols = [col for col in df.columns if col not in ['cycle_number', 'rul']]
-            X = df[feature_cols].values
-            y = df['rul'].values
-            
-            # Remove NaN values
-            valid_mask = ~(np.isnan(X).any(axis=1) | np.isnan(y))
-            X = X[valid_mask]
-            y = y[valid_mask]
-            
-            if len(X) > 0:
-                X_list.append(X)
-                y_list.append(y)
         
         if not X_list:
             raise ValueError("No valid training samples found")
@@ -264,9 +281,9 @@ class CrossChemistryTrainer:
             print(f"Training data shape: {X_train.shape}")
             print(f"Features: {len(feature_names)}")
         
-        return X_train, y_train, list(feature_names)
+        return X_train, y_train, feature_names
 
-    def _prepare_test_data(self, chemistry_path: Path) -> Tuple[np.ndarray, np.ndarray, str]:
+    def _prepare_test_data(self, chemistry_path: Path, feature_names: List[str]) -> Tuple[np.ndarray, np.ndarray, str]:
         """Prepare test data from a test chemistry."""
         chemistry_name = chemistry_path.name
         if self.verbose:
@@ -276,7 +293,9 @@ class CrossChemistryTrainer:
         if not test_files:
             return np.array([]), np.array([]), chemistry_name
         
-        all_battery_data = []
+        # Process all batteries using the same feature names as training
+        X_list = []
+        y_list = []
         
         for f in tqdm(test_files, desc=f"Processing {chemistry_name} batteries", unit="battery"):
             try:
@@ -293,34 +312,27 @@ class CrossChemistryTrainer:
                 df = self._build_cycle_feature_matrix(battery, extractor)
                 
                 if not df.empty:
-                    all_battery_data.append((battery.cell_id, df))
+                    # Use same feature names as training
+                    feature_cols = [col for col in feature_names if col in df.columns]
+                    if not feature_cols:
+                        continue
+                    
+                    X = df[feature_cols].values
+                    y = df['rul'].values
+                    
+                    # Remove NaN values
+                    valid_mask = ~(np.isnan(X).any(axis=1) | np.isnan(y))
+                    X = X[valid_mask]
+                    y = y[valid_mask]
+                    
+                    if len(X) > 0:
+                        X_list.append(X)
+                        y_list.append(y)
                     
             except Exception as e:
                 if self.verbose:
                     print(f"Warning: Could not process {f}: {e}")
                 continue
-        
-        if not all_battery_data:
-            return np.array([]), np.array([]), chemistry_name
-        
-        # Convert to arrays
-        X_list = []
-        y_list = []
-        
-        for cell_id, df in all_battery_data:
-            # Use same features as training
-            feature_cols = [col for col in df.columns if col not in ['cycle_number', 'rul']]
-            X = df[feature_cols].values
-            y = df['rul'].values
-            
-            # Remove NaN values
-            valid_mask = ~(np.isnan(X).any(axis=1) | np.isnan(y))
-            X = X[valid_mask]
-            y = y[valid_mask]
-            
-            if len(X) > 0:
-                X_list.append(X)
-                y_list.append(y)
         
         if not X_list:
             return np.array([]), np.array([]), chemistry_name
@@ -387,10 +399,10 @@ class CrossChemistryTrainer:
             ))])
         
         # PLSR
-        models['plsr'] = Pipeline(base_steps + [('model', PLSRegression(n_components=10))])
+        models['plsr'] = Pipeline(base_steps + [('model', PLSRegression(n_components=5))])
         
         # PCR (PCA + Linear)
-        models['pcr'] = Pipeline(base_steps + [('model', Pipeline([('pca', PCA(n_components=20)), ('lr', LinearRegression())]))])
+        models['pcr'] = Pipeline(base_steps + [('model', Pipeline([('pca', PCA(n_components=5)), ('lr', LinearRegression())]))])
 
         return models
 
@@ -443,7 +455,7 @@ class CrossChemistryTrainer:
                 
                 # Evaluate on each test chemistry
                 for test_chemistry_path in self.test_chemistry_paths:
-                    X_test, y_test, chemistry_name = self._prepare_test_data(test_chemistry_path)
+                    X_test, y_test, chemistry_name = self._prepare_test_data(test_chemistry_path, feature_names)
                     
                     if X_test.size == 0:
                         if self.verbose:
