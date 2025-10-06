@@ -661,8 +661,8 @@ def plot_combined_chemistry_correlations(chemistry_dirs: List[str], output_dir: 
     features = df['feature'].unique()
     n_features = len(features)
     
-    # Calculate subplot layout
-    n_cols = min(3, n_features)
+    # Calculate subplot layout - 4 features per row
+    n_cols = min(4, n_features)
     n_rows = (n_features + n_cols - 1) // n_cols
     
     fig, axes = plt.subplots(n_rows, n_cols, figsize=(5 * n_cols, 4 * n_rows))
