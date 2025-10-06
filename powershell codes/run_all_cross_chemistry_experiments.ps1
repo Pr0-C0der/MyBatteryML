@@ -81,9 +81,9 @@ foreach ($TrainChem in $AvailableChemistries) {
     $TestChems = $AvailableChemistries | Where-Object { $_ -ne $TrainChem }
     if ($TestChems.Count -gt 0) {
         $Experiments += @{
-            TrainChemistry = $TrainChem
+            TrainChemistry  = $TrainChem
             TestChemistries = $TestChems
-            OutputDir = Join-Path $OutputBaseDir "train_$TrainChem"
+            OutputDir       = Join-Path $OutputBaseDir "train_$TrainChem"
         }
     }
 }
@@ -114,7 +114,7 @@ foreach ($Exp in $Experiments) {
     
     # Build command arguments
     $CommandArgs = @(
-        "python", "batteryml/chemistry_data_analysis/cross_chemistry_training.py"
+        "python", "run_cross_chemistry_training.py"
         "--train_chemistry", $TrainPath
         "--test_chemistries"
     ) + $TestPaths + @(
@@ -145,7 +145,7 @@ foreach ($Exp in $Experiments) {
         Write-Host "Running: $($CommandArgs -join ' ')" -ForegroundColor Cyan
         Write-Host ""
         
-        & $CommandArgs[0] $CommandArgs[1..($CommandArgs.Length-1)]
+        & $CommandArgs[0] $CommandArgs[1..($CommandArgs.Length - 1)]
         
         $ExpEndTime = Get-Date
         $ExpDuration = $ExpEndTime - $ExpStartTime

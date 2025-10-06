@@ -6,10 +6,17 @@ This script trains models on one chemistry (e.g., LFP) and tests on other chemis
 to evaluate cross-chemistry generalization performance.
 """
 
+import sys
+import os
+from pathlib import Path
+
+# Add the project root to Python path
+project_root = Path(__file__).parent.parent.parent
+sys.path.insert(0, str(project_root))
+
 import pandas as pd
 import numpy as np
 import argparse
-from pathlib import Path
 from typing import List, Tuple, Dict, Optional
 import warnings
 from sklearn.model_selection import GroupKFold, ParameterGrid
