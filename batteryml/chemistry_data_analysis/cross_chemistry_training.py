@@ -6,19 +6,13 @@ This script trains models on one chemistry (e.g., LFP) and tests on other chemis
 to evaluate cross-chemistry generalization performance.
 """
 
-import sys
-import os
-from pathlib import Path
-
-# Add the project root to Python path
-project_root = Path(__file__).parent.parent.parent
-sys.path.insert(0, str(project_root))
-
 import pandas as pd
 import numpy as np
 import argparse
+from pathlib import Path
 from typing import List, Tuple, Dict, Optional
 import warnings
+import sys
 from sklearn.model_selection import GroupKFold, ParameterGrid
 from sklearn.metrics import mean_squared_error, mean_absolute_error
 from sklearn.pipeline import Pipeline
@@ -32,6 +26,11 @@ from sklearn.svm import SVR
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.neural_network import MLPRegressor
 from tqdm import tqdm
+
+# Ensure project root (parent of 'batteryml') is on sys.path when run directly
+_PROJECT_ROOT = Path(__file__).resolve().parents[2]
+if str(_PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(_PROJECT_ROOT))
 
 # Optional imports for advanced models
 try:

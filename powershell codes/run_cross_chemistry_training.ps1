@@ -94,7 +94,7 @@ if ($ValidTestChemistries.Count -lt $TestChemistries.Count) {
 }
 
 # Check if Python script exists
-$ScriptPath = "run_cross_chemistry_training.py"
+$ScriptPath = "batteryml/chemistry_data_analysis/cross_chemistry_training.py"
 if (-not (Test-Path $ScriptPath)) {
     Write-Host "Error: Python script not found: $ScriptPath" -ForegroundColor Red
     Write-Host "Please ensure you're running from the correct directory." -ForegroundColor Yellow

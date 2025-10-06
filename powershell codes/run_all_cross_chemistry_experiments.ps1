@@ -114,7 +114,7 @@ foreach ($Exp in $Experiments) {
     
     # Build command arguments
     $CommandArgs = @(
-        "python", "run_cross_chemistry_training.py"
+        "python", "batteryml/chemistry_data_analysis/cross_chemistry_training.py"
         "--train_chemistry", $TrainPath
         "--test_chemistries"
     ) + $TestPaths + @(
