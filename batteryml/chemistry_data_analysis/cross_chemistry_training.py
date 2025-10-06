@@ -6,13 +6,19 @@ This script trains models on one chemistry (e.g., LFP) and tests on other chemis
 to evaluate cross-chemistry generalization performance.
 """
 
+import sys
+from pathlib import Path
+
+# Ensure project root (parent of 'batteryml') is on sys.path when run directly
+_PROJECT_ROOT = Path(__file__).resolve().parents[2]
+if str(_PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(_PROJECT_ROOT))
+
 import pandas as pd
 import numpy as np
 import argparse
-from pathlib import Path
 from typing import List, Tuple, Dict, Optional
 import warnings
-import sys
 from sklearn.model_selection import GroupKFold, ParameterGrid
 from sklearn.metrics import mean_squared_error, mean_absolute_error
 from sklearn.pipeline import Pipeline
@@ -27,11 +33,6 @@ from sklearn.ensemble import RandomForestRegressor
 from sklearn.neural_network import MLPRegressor
 from tqdm import tqdm
 
-# Ensure project root (parent of 'batteryml') is on sys.path when run directly
-_PROJECT_ROOT = Path(__file__).resolve().parents[2]
-if str(_PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(_PROJECT_ROOT))
-
 # Optional imports for advanced models
 try:
     from xgboost import XGBRegressor
@@ -40,32 +41,21 @@ except Exception:
     _HAS_XGB = False
 
 try:
-    import torch
-    import torch.nn as nn
-    from torch.utils.data import DataLoader, TensorDataset
-    from batteryml.models.rul_predictors.cnn import CNNRULPredictor
-    from batteryml.models.rul_predictors.lstm import LSTMRULPredictor
-    from batteryml.models.rul_predictors.transformer import TransformerRULPredictor
-    _HAS_TORCH = True
-except Exception:
-    _HAS_TORCH = False
-
-try:
     import cuml  # noqa: F401
     _HAS_CUML = True
 except Exception:
     _HAS_CUML = False
 
-try:
-    import torch  # noqa: F401
-    import gpytorch  # noqa: F401
-    _HAS_GPYTORCH = True
-except Exception:
-    _HAS_GPYTORCH = False
-
 from batteryml.data.battery_data import BatteryData
 from batteryml.label.rul import RULLabelAnnotator
 from batteryml.chemistry_data_analysis.cycle_features import get_extractor_class
+from batteryml.training.train_rul_windows import (
+    _infer_dataset_for_battery,
+    _build_cycle_feature_table_extractor,
+    _build_models,
+    _fit_label_transform,
+    _inverse_label_transform
+)
 
 # Suppress warnings
 warnings.filterwarnings('ignore')
@@ -128,75 +118,8 @@ class CrossChemistryTrainer:
         """Get all battery files in a chemistry folder."""
         return sorted(chemistry_path.glob('*.pkl'))
 
-    def _infer_dataset_for_battery(self, battery: BatteryData) -> Optional[str]:
-        """Infer dataset for a battery."""
-        if self.dataset_hint:
-            return str(self.dataset_hint).upper()
-        
-        # Try tokens in metadata - handle both UL_PUR and UL-PUR patterns
-        tokens = ['MATR', 'MATR1', 'MATR2', 'CALCE', 'SNL', 'RWTH', 'HNEI', 'UL_PUR', 'UL-PUR', 'HUST', 'OX']
-        
-        def _txt(x):
-            try:
-                return str(x).upper()
-            except Exception:
-                return ''
-        
-        for source in [battery.cell_id, getattr(battery, 'reference', ''), getattr(battery, 'description', '')]:
-            s = _txt(source)
-            for t in tokens:
-                if t in s:
-                    # Normalize UL-PUR to UL_PUR for consistency
-                    return 'UL_PUR' if t in ['UL_PUR', 'UL-PUR'] else t
-        return None
-
-    def _build_cycle_feature_matrix(self, battery: BatteryData, extractor) -> pd.DataFrame:
-        """Build cycle feature matrix for a battery."""
-        data = []
-        total_rul = self._compute_total_rul(battery)
-        
-        # Apply cycle limit if specified
-        cycles_to_process = battery.cycle_data
-        if self.cycle_limit is not None and self.cycle_limit > 0:
-            cycles_to_process = cycles_to_process[:self.cycle_limit]
-        
-        for idx, c in enumerate(cycles_to_process):
-            row = {
-                'cycle_number': c.cycle_number,
-                'rul': max(0, total_rul - idx)
-            }
-            
-            if extractor is not None:
-                # Get all available features from the extractor
-                feature_methods = [method for method in dir(extractor) 
-                                 if not method.startswith('_') and callable(getattr(extractor, method))]
-                
-                for method_name in feature_methods:
-                    try:
-                        method = getattr(extractor, method_name)
-                        val = method(battery, c)
-                        if val is not None and np.isfinite(val):
-                            row[method_name] = float(val)
-                        else:
-                            row[method_name] = np.nan
-                    except Exception:
-                        row[method_name] = np.nan
-            
-            data.append(row)
-        
-        return pd.DataFrame(data)
-
-    def _compute_total_rul(self, battery: BatteryData) -> int:
-        """Compute total RUL for a battery."""
-        try:
-            rul_tensor = self.rul_annotator.process_cell(battery)
-            v = int(rul_tensor.item())
-            return v if np.isfinite(v) else 0
-        except Exception:
-            return 0
-
     def _prepare_training_data(self) -> Tuple[np.ndarray, np.ndarray, List[str]]:
-        """Prepare training data from the training chemistry."""
+        """Prepare training data from the training chemistry using the same approach as chemistry_training.py."""
         if self.verbose:
             print(f"Preparing training data from {self.train_chemistry_name}...")
         
@@ -207,40 +130,15 @@ class CrossChemistryTrainer:
         if self.verbose:
             print(f"Found {len(train_files)} battery files")
         
-        # Get feature names from first valid battery
-        feature_names = []
-        for f in train_files:
-            try:
-                battery = BatteryData.load(f)
-                dataset = self._infer_dataset_for_battery(battery)
-                if not dataset:
-                    if self.verbose:
-                        print(f"No dataset found for {f}")
-                    continue
-                
-                extractor_class = get_extractor_class(dataset)
-                if extractor_class is None:
-                    if self.verbose:
-                        print(f"No extractor class found for dataset {dataset}")
-                    continue
-                
-                extractor = extractor_class()
-                # Get all available features from the extractor
-                feature_methods = [method for method in dir(extractor) 
-                                 if not method.startswith('_') and callable(getattr(extractor, method))]
-                feature_names = feature_methods
-                if self.verbose:
-                    print(f"Found {len(feature_names)} features from dataset {dataset}")
-                break
-            except Exception as e:
-                if self.verbose:
-                    print(f"Error processing {f}: {e}")
-                continue
-        
+        # Get feature names using the same approach as chemistry_training.py
+        feature_names = self._get_available_features(train_files)
         if not feature_names:
-            raise ValueError("No valid feature extractor found")
+            raise ValueError("No valid features found")
         
-        # Process all batteries using the same feature names
+        if self.verbose:
+            print(f"Using {len(feature_names)} features: {feature_names[:10]}...")
+        
+        # Process all batteries using the same approach as chemistry_training.py
         X_list = []
         y_list = []
         processed_batteries = 0
@@ -248,39 +146,48 @@ class CrossChemistryTrainer:
         for f in tqdm(train_files, desc="Processing training batteries", unit="battery"):
             try:
                 battery = BatteryData.load(f)
-                dataset = self._infer_dataset_for_battery(battery)
-                if not dataset:
+                
+                # Build feature table using the same method as chemistry_training.py
+                df = _build_cycle_feature_table_extractor(battery, feature_names)
+                
+                if df.empty:
+                    if self.verbose:
+                        print(f"Empty feature table for {f}")
                     continue
                 
-                extractor_class = get_extractor_class(dataset)
-                if extractor_class is None:
+                # Calculate total RUL using the same approach
+                try:
+                    rul_tensor = self.rul_annotator.process_cell(battery)
+                    total_rul = int(rul_tensor.item()) if np.isfinite(float(rul_tensor.item())) else 0
+                except Exception:
+                    total_rul = 0
+                
+                if total_rul <= 0:
+                    if self.verbose:
+                        print(f"Invalid RUL for {f}: {total_rul}")
                     continue
                 
-                extractor = extractor_class()
-                df = self._build_cycle_feature_matrix(battery, extractor)
+                # Extract features (mean values across cycles) - same as chemistry_training.py
+                feature_values = []
+                for name in feature_names:
+                    if name in df.columns:
+                        val = df[name].mean()
+                        feature_values.append(float(val) if np.isfinite(val) else np.nan)
+                    else:
+                        feature_values.append(np.nan)
                 
-                if not df.empty:
-                    # Use consistent feature names
-                    feature_cols = [col for col in feature_names if col in df.columns]
-                    if not feature_cols:
-                        if self.verbose:
-                            print(f"No matching features for {f}")
-                        continue
-                    
-                    X = df[feature_cols].values
-                    y = df['rul'].values
-                    
-                    # Remove NaN values
-                    valid_mask = ~(np.isnan(X).any(axis=1) | np.isnan(y))
-                    X = X[valid_mask]
-                    y = y[valid_mask]
-                    
-                    if len(X) > 0:
-                        X_list.append(X)
-                        y_list.append(y)
-                        processed_batteries += 1
-                        if self.verbose:
-                            print(f"Processed {f}: {len(X)} samples, RUL range: {y.min():.1f}-{y.max():.1f}")
+                # Check if we have valid features
+                if not any(np.isfinite(feature_values)):
+                    if self.verbose:
+                        print(f"No valid features for {f}")
+                    continue
+                
+                X_list.append(np.array(feature_values))
+                y_list.append(float(total_rul))
+                processed_batteries += 1
+                
+                if self.verbose:
+                    print(f"Processed {f}: RUL={total_rul}, features={len([x for x in feature_values if np.isfinite(x)])}")
                     
             except Exception as e:
                 if self.verbose:
@@ -293,19 +200,48 @@ class CrossChemistryTrainer:
         if not X_list:
             raise ValueError("No valid training samples found")
         
-        # Concatenate all data
+        # Convert to arrays
         X_train = np.vstack(X_list)
-        y_train = np.concatenate(y_list)
+        y_train = np.array(y_list)
         
         if self.verbose:
             print(f"Training data shape: {X_train.shape}")
-            print(f"Features: {len(feature_names)}")
             print(f"RUL range: {y_train.min():.1f}-{y_train.max():.1f}")
         
         return X_train, y_train, feature_names
 
+    def _get_available_features(self, files: List[Path]) -> List[str]:
+        """Get available features from the first valid battery, same approach as chemistry_training.py."""
+        for f in files:
+            try:
+                battery = BatteryData.load(f)
+                dataset = _infer_dataset_for_battery(battery)
+                if not dataset:
+                    continue
+                
+                extractor_class = get_extractor_class(dataset)
+                if extractor_class is None:
+                    continue
+                
+                # Get all available features from the extractor
+                extractor = extractor_class()
+                feature_methods = [method for method in dir(extractor) 
+                                 if not method.startswith('_') and callable(getattr(extractor, method))]
+                
+                if self.verbose:
+                    print(f"Found {len(feature_methods)} features from dataset {dataset}")
+                
+                return feature_methods
+                
+            except Exception as e:
+                if self.verbose:
+                    print(f"Error getting features from {f}: {e}")
+                continue
+        
+        return []
+
     def _prepare_test_data(self, chemistry_path: Path, feature_names: List[str]) -> Tuple[np.ndarray, np.ndarray, str]:
-        """Prepare test data from a test chemistry."""
+        """Prepare test data from a test chemistry using the same approach as chemistry_training.py."""
         chemistry_name = chemistry_path.name
         if self.verbose:
             print(f"Preparing test data from {chemistry_name}...")
@@ -314,42 +250,46 @@ class CrossChemistryTrainer:
         if not test_files:
             return np.array([]), np.array([]), chemistry_name
         
-        # Process all batteries using the same feature names as training
+        # Process all batteries using the same approach as chemistry_training.py
         X_list = []
         y_list = []
         
         for f in tqdm(test_files, desc=f"Processing {chemistry_name} batteries", unit="battery"):
             try:
                 battery = BatteryData.load(f)
-                dataset = self._infer_dataset_for_battery(battery)
-                if not dataset:
+                
+                # Build feature table using the same method as chemistry_training.py
+                df = _build_cycle_feature_table_extractor(battery, feature_names)
+                
+                if df.empty:
                     continue
                 
-                extractor_class = get_extractor_class(dataset)
-                if extractor_class is None:
+                # Calculate total RUL using the same approach
+                try:
+                    rul_tensor = self.rul_annotator.process_cell(battery)
+                    total_rul = int(rul_tensor.item()) if np.isfinite(float(rul_tensor.item())) else 0
+                except Exception:
+                    total_rul = 0
+                
+                if total_rul <= 0:
                     continue
                 
-                extractor = extractor_class()
-                df = self._build_cycle_feature_matrix(battery, extractor)
+                # Extract features (mean values across cycles) - same as chemistry_training.py
+                feature_values = []
+                for name in feature_names:
+                    if name in df.columns:
+                        val = df[name].mean()
+                        feature_values.append(float(val) if np.isfinite(val) else np.nan)
+                    else:
+                        feature_values.append(np.nan)
                 
-                if not df.empty:
-                    # Use same feature names as training
-                    feature_cols = [col for col in feature_names if col in df.columns]
-                    if not feature_cols:
-                        continue
-                    
-                    X = df[feature_cols].values
-                    y = df['rul'].values
-                    
-                    # Remove NaN values
-                    valid_mask = ~(np.isnan(X).any(axis=1) | np.isnan(y))
-                    X = X[valid_mask]
-                    y = y[valid_mask]
-                    
-                    if len(X) > 0:
-                        X_list.append(X)
-                        y_list.append(y)
-                    
+                # Check if we have valid features
+                if not any(np.isfinite(feature_values)):
+                    continue
+                
+                X_list.append(np.array(feature_values))
+                y_list.append(float(total_rul))
+                
             except Exception as e:
                 if self.verbose:
                     print(f"Warning: Could not process {f}: {e}")
@@ -358,9 +298,9 @@ class CrossChemistryTrainer:
         if not X_list:
             return np.array([]), np.array([]), chemistry_name
         
-        # Concatenate all data
+        # Convert to arrays
         X_test = np.vstack(X_list)
-        y_test = np.concatenate(y_list)
+        y_test = np.array(y_list)
         
         if self.verbose:
             print(f"Test data shape for {chemistry_name}: {X_test.shape}")
@@ -368,64 +308,8 @@ class CrossChemistryTrainer:
         return X_test, y_test, chemistry_name
 
     def _build_models(self) -> Dict[str, Pipeline]:
-        """Build all available models for training."""
-        models = {}
-        base_steps = [('imputer', SimpleImputer(strategy='constant', fill_value=0.0)), ('scaler', StandardScaler())]
-
-        # Determine if GPU is truly available
-        gpu_available = False
-        if self.use_gpu:
-            try:
-                import torch  # type: ignore
-                gpu_available = bool(getattr(torch, 'cuda', None) and torch.cuda.is_available())
-            except Exception:
-                gpu_available = False
-
-        # Prefer cuML implementations only when GPU is available
-        if gpu_available and _HAS_CUML:
-            from cuml.linear_model import LinearRegression as cuLinearRegression, Ridge as cuRidge, ElasticNet as cuElasticNet
-            from cuml.svm import SVR as cuSVR
-            from cuml.ensemble import RandomForestRegressor as cuRF
-            models['linear_regression'] = Pipeline(base_steps + [('model', cuLinearRegression())])
-            models['ridge'] = Pipeline(base_steps + [('model', cuRidge())])
-            models['elastic_net'] = Pipeline(base_steps + [('model', cuElasticNet())])
-            models['svr'] = Pipeline(base_steps + [('model', cuSVR(kernel='rbf', C=10.0))])
-            models['random_forest'] = Pipeline(base_steps + [('model', cuRF(n_estimators=40, random_state=42))])
-        else:
-            # Linear models (CPU)
-            models['linear_regression'] = Pipeline(base_steps + [('model', LinearRegression())])
-            models['ridge'] = Pipeline(base_steps + [('model', Ridge(alpha=1.0))])
-            models['elastic_net'] = Pipeline(base_steps + [('model', ElasticNet(alpha=0.001, l1_ratio=0.5, max_iter=10000))])
-            # Kernel (CPU)
-            models['svr'] = Pipeline(base_steps + [('model', SVR(kernel='rbf', C=10.0, gamma='scale'))])
-            # Trees (CPU)
-            models['random_forest'] = Pipeline(base_steps + [('model', RandomForestRegressor(n_estimators=40, random_state=42, n_jobs=-1))])
-        
-        # Shallow MLP
-        models['mlp'] = Pipeline(base_steps + [('model', MLPRegressor(hidden_layer_sizes=(128, 64), activation='relu', batch_size=256, max_iter=300, random_state=42))])
-        
-        # XGBoost
-        if _HAS_XGB:
-            xgb_device = 'cuda' if gpu_available else 'cpu'
-            models['xgboost'] = Pipeline(base_steps + [('model', XGBRegressor(
-                n_estimators=600,
-                max_depth=6,
-                learning_rate=0.05,
-                subsample=0.9,
-                colsample_bytree=0.9,
-                random_state=42,
-                n_jobs=-1,
-                tree_method='hist',
-                device=xgb_device
-            ))])
-        
-        # PLSR
-        models['plsr'] = Pipeline(base_steps + [('model', PLSRegression(n_components=5))])
-        
-        # PCR (PCA + Linear)
-        models['pcr'] = Pipeline(base_steps + [('model', Pipeline([('pca', PCA(n_components=5)), ('lr', LinearRegression())]))])
-
-        return models
+        """Build all available models for training using the same approach as chemistry_training.py."""
+        return _build_models(use_gpu=self.use_gpu)
 
     def _save_metric_results(self, results: Dict[str, Dict[str, float]], metric_file: Path, metric_name: str):
         """Save metric results to CSV file."""
@@ -448,19 +332,10 @@ class CrossChemistryTrainer:
             print("Starting cross-chemistry training and evaluation...")
         
         # Prepare training data
-        try:
-            X_train, y_train, feature_names = self._prepare_training_data()
-        except Exception as e:
-            if self.verbose:
-                print(f"Error in _prepare_training_data: {e}")
-                print(f"Training chemistry path: {self.train_chemistry_path}")
-                print(f"Path exists: {self.train_chemistry_path.exists()}")
-                if self.train_chemistry_path.exists():
-                    files = list(self.train_chemistry_path.glob('*.pkl'))
-                    print(f"PKL files found: {len(files)}")
-                    if files:
-                        print(f"First few files: {files[:3]}")
-            raise
+        X_train, y_train, feature_names = self._prepare_training_data()
+        
+        # Apply label transformation (same as chemistry_training.py)
+        y_train_t, train_label_stats = _fit_label_transform(y_train)
         
         # Build models
         models = self._build_models()
@@ -479,7 +354,7 @@ class CrossChemistryTrainer:
             
             try:
                 # Train model
-                pipe.fit(X_train, y_train)
+                pipe.fit(X_train, y_train_t)
                 
                 # Initialize results for this model
                 model_rmse = {}
@@ -498,8 +373,12 @@ class CrossChemistryTrainer:
                         model_mape[chemistry_name] = np.nan
                         continue
                     
-                    # Make predictions
-                    y_pred = pipe.predict(X_test)
+                    # Make predictions and inverse transform (same as chemistry_training.py)
+                    y_pred_t = pipe.predict(X_test)
+                    y_pred_t = np.asarray(y_pred_t, dtype=float)
+                    y_pred_t = np.nan_to_num(y_pred_t, nan=0.0, posinf=0.0, neginf=0.0)
+                    y_pred_t = np.clip(y_pred_t, a_min=-50.0, a_max=50.0)
+                    y_pred = _inverse_label_transform(y_pred_t, train_label_stats)
                     
                     # Calculate metrics
                     rmse = mean_squared_error(y_test, y_pred) ** 0.5
@@ -600,11 +479,11 @@ def main():
         print(f"\nBest {metric} per test chemistry:")
         for test_chem in trainer.test_chemistry_names:
             best_model = None
-            best_score = np.inf if metric != 'MAPE' else np.inf
+            best_score = np.inf
             for model_name, model_results in results[metric].items():
                 if test_chem in model_results and not np.isnan(model_results[test_chem]):
                     score = model_results[test_chem]
-                    if (metric == 'MAPE' and score < best_score) or (metric != 'MAPE' and score < best_score):
+                    if score < best_score:
                         best_score = score
                         best_model = model_name
             if best_model:
