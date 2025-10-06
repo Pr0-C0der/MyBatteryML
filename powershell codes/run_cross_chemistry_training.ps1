@@ -32,6 +32,7 @@ if ($Help) {
     Write-Host "  -CycleLimit <int>           : Limit analysis to first N cycles [default: 0 (all cycles)]"
     Write-Host "  -Smoothing <string>         : Smoothing method (none, ma, median, hms) [default: none]"
     Write-Host "  -MaWindow <int>             : Window size for smoothing [default: 5]"
+    Write-Host "  -Features <array>           : Features to use [default: avg_charge_capacity, max_charge_capacity, etc.]"
     Write-Host "  -UseGPU                     : Use GPU acceleration"
     Write-Host "  -Tune                       : Enable hyperparameter tuning"
     Write-Host "  -CvSplits <int>             : Number of cross-validation splits [default: 5]"
@@ -118,6 +119,7 @@ Write-Host "  Dataset Hint: $(if ($DatasetHint) { $DatasetHint } else { 'Auto-de
 Write-Host "  Cycle Limit: $(if ($CycleLimit -gt 0) { $CycleLimit } else { 'All cycles' })" -ForegroundColor White
 Write-Host "  Smoothing: $Smoothing" -ForegroundColor White
 Write-Host "  MA Window: $MaWindow" -ForegroundColor White
+Write-Host "  Features: $($Features -join ', ')" -ForegroundColor White
 Write-Host "  Use GPU: $UseGPU" -ForegroundColor White
 Write-Host "  Tune: $Tune" -ForegroundColor White
 Write-Host "  CV Splits: $CvSplits" -ForegroundColor White
@@ -152,8 +154,14 @@ if ($Tune) {
     $CommandArgs += "--tune"
 }
 
+if ($Features.Count -gt 0) {
+    $CommandArgs += "--features"
+    $CommandArgs += $Features
+}
 
-$CommandArgs += "--verbose"
+if ($Verbose) {
+    $CommandArgs += "--verbose"
+}
 
 
 Write-Host "Running command: $($CommandArgs -join ' ')" -ForegroundColor Cyan
