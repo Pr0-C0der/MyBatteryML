@@ -204,6 +204,9 @@ class CrossChemistryTrainer:
         if not train_files:
             raise ValueError(f"No battery files found in {self.train_chemistry_path}")
         
+        if self.verbose:
+            print(f"Found {len(train_files)} battery files")
+        
         # Get feature names from first valid battery
         feature_names = []
         for f in train_files:
@@ -211,10 +214,14 @@ class CrossChemistryTrainer:
                 battery = BatteryData.load(f)
                 dataset = self._infer_dataset_for_battery(battery)
                 if not dataset:
+                    if self.verbose:
+                        print(f"No dataset found for {f}")
                     continue
                 
                 extractor_class = get_extractor_class(dataset)
                 if extractor_class is None:
+                    if self.verbose:
+                        print(f"No extractor class found for dataset {dataset}")
                     continue
                 
                 extractor = extractor_class()
@@ -222,8 +229,12 @@ class CrossChemistryTrainer:
                 feature_methods = [method for method in dir(extractor) 
                                  if not method.startswith('_') and callable(getattr(extractor, method))]
                 feature_names = feature_methods
+                if self.verbose:
+                    print(f"Found {len(feature_names)} features from dataset {dataset}")
                 break
-            except Exception:
+            except Exception as e:
+                if self.verbose:
+                    print(f"Error processing {f}: {e}")
                 continue
         
         if not feature_names:
@@ -232,6 +243,7 @@ class CrossChemistryTrainer:
         # Process all batteries using the same feature names
         X_list = []
         y_list = []
+        processed_batteries = 0
         
         for f in tqdm(train_files, desc="Processing training batteries", unit="battery"):
             try:
@@ -251,6 +263,8 @@ class CrossChemistryTrainer:
                     # Use consistent feature names
                     feature_cols = [col for col in feature_names if col in df.columns]
                     if not feature_cols:
+                        if self.verbose:
+                            print(f"No matching features for {f}")
                         continue
                     
                     X = df[feature_cols].values
@@ -264,11 +278,17 @@ class CrossChemistryTrainer:
                     if len(X) > 0:
                         X_list.append(X)
                         y_list.append(y)
+                        processed_batteries += 1
+                        if self.verbose:
+                            print(f"Processed {f}: {len(X)} samples, RUL range: {y.min():.1f}-{y.max():.1f}")
                     
             except Exception as e:
                 if self.verbose:
                     print(f"Warning: Could not process {f}: {e}")
                 continue
+        
+        if self.verbose:
+            print(f"Processed {processed_batteries} batteries")
         
         if not X_list:
             raise ValueError("No valid training samples found")
@@ -280,6 +300,7 @@ class CrossChemistryTrainer:
         if self.verbose:
             print(f"Training data shape: {X_train.shape}")
             print(f"Features: {len(feature_names)}")
+            print(f"RUL range: {y_train.min():.1f}-{y_train.max():.1f}")
         
         return X_train, y_train, feature_names
 
