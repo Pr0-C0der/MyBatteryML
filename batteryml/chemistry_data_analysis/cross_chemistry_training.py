@@ -148,7 +148,7 @@ class CrossChemistryTrainer:
                 battery = BatteryData.load(f)
                 
                 # Build feature table using the same method as chemistry_training.py
-                df = _build_cycle_feature_table_extractor(battery, feature_names)
+                df = _build_cycle_feature_table_extractor(battery, feature_names, self.dataset_hint)
                 
                 if df.empty:
                     if self.verbose:
@@ -215,7 +215,7 @@ class CrossChemistryTrainer:
         for f in files:
             try:
                 battery = BatteryData.load(f)
-                dataset = _infer_dataset_for_battery(battery)
+                dataset = _infer_dataset_for_battery(self.dataset_hint, battery)
                 if not dataset:
                     continue
                 
@@ -259,7 +259,7 @@ class CrossChemistryTrainer:
                 battery = BatteryData.load(f)
                 
                 # Build feature table using the same method as chemistry_training.py
-                df = _build_cycle_feature_table_extractor(battery, feature_names)
+                df = _build_cycle_feature_table_extractor(battery, feature_names, self.dataset_hint)
                 
                 if df.empty:
                     continue
