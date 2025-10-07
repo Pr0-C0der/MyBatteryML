@@ -8,6 +8,11 @@ from typing import Callable, List, Optional, Tuple, Dict
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
+import seaborn as sns
+
+# Set sober color palette
+plt.style.use('default')
+sns.set_palette('husl')
 
 from batteryml.data.battery_data import BatteryData
 from batteryml.chemistry_data_analysis.cycle_features import (
@@ -207,7 +212,10 @@ class ChemistryCyclePlotter:
                 if not np.any(m):
                     continue
                 xr = x[m] - x[m][0]
-                plt.plot(xr, y[m], linewidth=1.5, alpha=0.9, label=f'Cycle {c.cycle_number}')
+                # Use sober colors - cycle through a muted palette
+                colors = ['#2E86AB', '#A23B72', '#F18F01', '#C73E1D', '#6A994E', '#7209B7', '#F77F00', '#FCBF49']
+                color = colors[i % len(colors)]
+                plt.plot(xr, y[m], linewidth=1.5, alpha=0.9, color=color, label=f'Cycle {c.cycle_number}')
                 any_plotted = True
                 x_label, y_label = xl, yl
             except Exception as e:
@@ -221,8 +229,8 @@ class ChemistryCyclePlotter:
         plt.title(f'{spec.name.title()} vs Time - {battery.cell_id}')
         plt.xlabel(x_label)
         plt.ylabel(y_label)
-        plt.grid(True, alpha=0.3)
-        plt.legend(loc='upper right', fontsize=8)
+        plt.grid(False)  # Remove grid
+        plt.legend(loc='upper right', fontsize=8, frameon=False)  # Remove frame around legend
         out_dir = self.output_dir / self._chemistry_name / 'feature_vs_time_graphs' / f"{spec.name}"
         safe_id = self._safe_filename(battery.cell_id)
         self._save_png(out_dir / f"{safe_id}_{spec.name}_time")
@@ -259,11 +267,12 @@ class ChemistryCyclePlotter:
         xs_s = xs_s[m]; ys_s = ys_s[m]
         plt.figure(figsize=(10, 6))
         ys_sm = self._moving_average(ys_s, self._MA_WINDOW)
-        plt.plot(xs_s, ys_sm, marker='o', linewidth=1.6, alpha=0.9)
+        # Use sober color for cycle plots
+        plt.plot(xs_s, ys_sm, marker='o', linewidth=1.6, alpha=0.9, color='#2E86AB', markersize=3)
         plt.title(f'{spec.name.title()} vs Cycle Number - {battery.cell_id}')
         plt.xlabel('Cycle Number')
         plt.ylabel(spec.ylabel or spec.name.replace('_', ' ').title())
-        plt.grid(True, alpha=0.3)
+        plt.grid(False)  # Remove grid
         out_dir = self.output_dir / self._chemistry_name / 'feature_vs_cycle_graphs' / f"{spec.name}"
         safe_id = self._safe_filename(battery.cell_id)
         self._save_png(out_dir / f"{safe_id}_{spec.name}_cycle")
