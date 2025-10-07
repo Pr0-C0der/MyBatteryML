@@ -4,6 +4,7 @@
 param(
     [string]$Smoothing = "none",
     [int]$Window = 5,
+    [switch]$Normalize = $false,
     [switch]$Verbose = $false
 )
 
@@ -13,6 +14,10 @@ Write-Host ""
 
 # Build command
 $Command = "python plot_max_discharge_capacity_by_dataset.py --smoothing $Smoothing --window $Window"
+
+if ($Normalize) {
+    $Command += " --normalize"
+}
 
 if ($Verbose) {
     $Command += " --verbose"

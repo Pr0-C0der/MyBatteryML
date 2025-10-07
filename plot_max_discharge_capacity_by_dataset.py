@@ -155,7 +155,8 @@ def hampel_filter(data: np.ndarray, window: int = 5, n_sigma: float = 3.0) -> np
 
 
 def extract_max_discharge_capacity_data(battery: BatteryData, dataset_name: str, 
-                                      smoothing: str = 'none', window: int = 5) -> Tuple[np.ndarray, np.ndarray]:
+                                      smoothing: str = 'none', window: int = 5,
+                                      normalize: bool = False) -> Tuple[np.ndarray, np.ndarray]:
     """Extract max discharge capacity vs cycle data for a battery."""
     # Get the appropriate extractor
     extractor_class = get_extractor_class(dataset_name)
@@ -183,6 +184,13 @@ def extract_max_discharge_capacity_data(battery: BatteryData, dataset_name: str,
     if smoothing != 'none' and len(capacities) > 0:
         capacities = apply_smoothing(capacities, smoothing, window)
     
+    # Apply normalization if requested
+    if normalize and len(capacities) > 0:
+        # Normalize to first value (capacity retention)
+        first_capacity = capacities[0]
+        if first_capacity > 0:
+            capacities = (capacities / first_capacity) * 100  # Convert to percentage
+    
     return cycles, capacities
 
 
@@ -190,6 +198,7 @@ def plot_max_discharge_capacity_by_dataset(output_dir: str = "max_discharge_capa
                                           figsize: Tuple[int, int] = (12, 8),
                                           smoothing: str = 'none',
                                           window: int = 5,
+                                          normalize: bool = False,
                                           verbose: bool = False):
     """Plot max discharge capacity vs cycle for each dataset."""
     
@@ -233,7 +242,7 @@ def plot_max_discharge_capacity_by_dataset(output_dir: str = "max_discharge_capa
             print(f"  Using battery: {battery.cell_id}")
         
         # Extract data
-        cycles, capacities = extract_max_discharge_capacity_data(battery, dataset_name, smoothing, window)
+        cycles, capacities = extract_max_discharge_capacity_data(battery, dataset_name, smoothing, window, normalize)
         
         if len(cycles) == 0:
             if verbose:
@@ -263,9 +272,12 @@ def plot_max_discharge_capacity_by_dataset(output_dir: str = "max_discharge_capa
     title = 'Max Discharge Capacity vs Cycle Number by Dataset'
     if smoothing != 'none':
         title += f' (Smoothed: {smoothing.upper()}, window={window})'
+    if normalize:
+        title += ' (Normalized)'
     plt.title(title, fontsize=14, fontweight='bold')
     plt.xlabel('Cycle Number', fontsize=12)
-    plt.ylabel('Max Discharge Capacity (Ah)', fontsize=12)
+    ylabel = 'Max Discharge Capacity (%)' if normalize else 'Max Discharge Capacity (Ah)'
+    plt.ylabel(ylabel, fontsize=12)
     plt.grid(False)  # Remove grid
     plt.legend(frameon=False, fontsize=10)  # Clean legend without frame
     
@@ -285,6 +297,7 @@ def plot_individual_datasets(output_dir: str = 'max_discharge_capacity_plots',
                             figsize: Tuple[int, int] = (10, 6),
                             smoothing: str = 'none',
                             window: int = 5,
+                            normalize: bool = False,
                             verbose: bool = False):
     """Plot individual max discharge capacity plots for each dataset."""
     
@@ -317,7 +330,7 @@ def plot_individual_datasets(output_dir: str = 'max_discharge_capacity_plots',
             print(f"  Using battery: {battery.cell_id}")
         
         # Extract data
-        cycles, capacities = extract_max_discharge_capacity_data(battery, dataset_name, smoothing, window)
+        cycles, capacities = extract_max_discharge_capacity_data(battery, dataset_name, smoothing, window, normalize)
         
         if len(cycles) == 0:
             if verbose:
@@ -336,9 +349,12 @@ def plot_individual_datasets(output_dir: str = 'max_discharge_capacity_plots',
         title = f'Max Discharge Capacity vs Cycle - {dataset_name} ({battery.cell_id})'
         if smoothing != 'none':
             title += f' (Smoothed: {smoothing.upper()}, window={window})'
+        if normalize:
+            title += ' (Normalized)'
         plt.title(title, fontsize=14, fontweight='bold')
         plt.xlabel('Cycle Number', fontsize=12)
-        plt.ylabel('Max Discharge Capacity (Ah)', fontsize=12)
+        ylabel = 'Max Discharge Capacity (%)' if normalize else 'Max Discharge Capacity (Ah)'
+        plt.ylabel(ylabel, fontsize=12)
         plt.grid(False)  # Remove grid
         
         # Adjust layout
@@ -372,6 +388,8 @@ def main():
                        help='Smoothing method (none, ma, median, hms) [default: none]')
     parser.add_argument('--window', type=int, default=5,
                        help='Smoothing window size [default: 5]')
+    parser.add_argument('--normalize', action='store_true',
+                       help='Normalize capacity to percentage (capacity retention)')
     parser.add_argument('--verbose', action='store_true',
                        help='Verbose output')
     
@@ -388,6 +406,7 @@ def main():
             figsize=tuple(args.figsize),
             smoothing=args.smoothing,
             window=args.window,
+            normalize=args.normalize,
             verbose=args.verbose
         )
     
@@ -398,6 +417,7 @@ def main():
             figsize=tuple(args.figsize),
             smoothing=args.smoothing,
             window=args.window,
+            normalize=args.normalize,
             verbose=args.verbose
         )
 
